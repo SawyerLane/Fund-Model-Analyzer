@@ -118,22 +118,9 @@ with st.sidebar:
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
 
     st.subheader("Exit Scenario")
-    exit_valuation_method = st.selectbox(
-        "Exit Valuation Method", 
-        ["Exit at Book Value", "Gross Asset Multiple", "Capitalization Rate (Cap Rate)"],
-        index=0,
-        help="Choose how the fund's exit value is determined. 'Book Value' is an organic return. 'Gross Asset Multiple' is based on total capital. 'Cap Rate' is based on the fund's income stream."
-    )
+    equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
+                                     help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
     
-    asset_multiple = 0
-    exit_cap_rate = 0
-    if exit_valuation_method == "Gross Asset Multiple":
-        asset_multiple = st.number_input("Gross Asset Multiple at Exit", value=1.5, step=0.1, format="%.2f", 
-                                         help="The multiple on total deployed capital (Equity + Debt) used to determine the gross asset value at exit.")
-    elif exit_valuation_method == "Capitalization Rate (Cap Rate)":
-        exit_cap_rate = st.number_input("Exit Cap Rate (%)", value=6.0, step=0.25, format="%.2f",
-                                        help="The capitalization rate applied to the fund's net operating income (NOI) to determine the exit value.") / 100.0
-
     default_exit_start = max(1, fund_duration_years - 1)
     default_exit_end = fund_duration_years
     exit_year_range = st.slider(
@@ -159,9 +146,7 @@ total_fund_debt_commitment = sum(t.amount for t in cfg.debt_tranches)
 with st.spinner("Running scenario..."):
     df, summary = apply_exit_scenario(
         cfg, wcfg, 
-        exit_valuation_method=exit_valuation_method,
-        asset_multiple=asset_multiple,
-        exit_cap_rate=exit_cap_rate,
+        equity_multiple=equity_multiple,
         exit_years=exit_years
     )
 
@@ -169,7 +154,7 @@ st.subheader("Model Outcomes")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Gross Asset Value at Exit", f"${summary.get('Gross_Exit_Proceeds', 0):,.0f}")
-    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):.2f}x")
+    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):.2f}x", help="Gross Asset Value at Exit / (Max Equity Deployed + Max Debt Drawn)")
 with col2:
     st.metric("LP MOIC (net)", format_metric(summary.get("LP_MOIC"), suffix="x"))
     st.metric("LP IRR (annual)", format_metric(summary.get("LP_IRR_annual", 0) * 100, suffix="%"))
@@ -178,7 +163,7 @@ with col3:
     st.metric("GP IRR (annual)", format_metric(summary.get("GP_IRR_annual", 0) * 100, suffix="%"))
 with col4:
     st.metric("Net Proceeds to Equity", f'${summary.get("Net_Proceeds_to_Equity", 0):,.0f}')
-    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):.2f}x")
+    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):.2f}x", help="Net Proceeds to Equity / Total Equity Commitment")
 
 st.markdown("---")
 st.subheader("Fund Cash Flows")
@@ -187,9 +172,10 @@ tab1, tab2 = st.tabs(["Monthly View", "Annual Summary"])
 with tab1:
     st.caption("Detailed monthly cash flows for the life of the fund.")
     show_cols = [
-        "Assets_Outstanding","Equity_Outstanding","Debt_Outstanding", "Asset_Interest_Income",
-        "Mgmt_Fees","Opex","Debt_Interest", "Operating_Cash_Flow", "LP_Contribution","GP_Contribution",
-        "Debt_Principal_Repay", "LP_Distribution","GP_Distribution","Tier_Used",
+        "Assets_Outstanding", "Unused_Capital", "Equity_Outstanding", "Debt_Outstanding", 
+        "Asset_Interest_Income", "Mgmt_Fees", "Opex", "Debt_Interest", "Operating_Cash_Flow", 
+        "LP_Contribution", "GP_Contribution", "Debt_Principal_Repay", 
+        "LP_Distribution", "GP_Distribution", "Tier_Used",
     ]
     available_cols = [col for col in show_cols if col in df.columns]
     display_df_monthly = df[available_cols].copy()
@@ -206,7 +192,7 @@ with tab2:
         'Asset_Interest_Income': 'sum', 'Mgmt_Fees': 'sum', 'Opex': 'sum',
         'Debt_Interest': 'sum', 'Operating_Cash_Flow': 'sum', 'LP_Contribution': 'sum',
         'GP_Contribution': 'sum', 'Debt_Principal_Repay': 'sum', 'LP_Distribution': 'sum',
-        'GP_Distribution': 'sum', 'Assets_Outstanding': 'last',
+        'GP_Distribution': 'sum', 'Assets_Outstanding': 'last', 'Unused_Capital': 'last',
         'Equity_Outstanding': 'last', 'Debt_Outstanding': 'last',
     }
     final_agg_rules = {k: v for k, v in agg_rules.items() if k in annual_df.columns}
@@ -230,6 +216,7 @@ if not df.empty:
         "Total_Interest_Incurred": df["Total_Interest_Incurred"].values,
         "Assets_Outstanding": df["Assets_Outstanding"].values, "Equity_Outstanding": df["Equity_Outstanding"].values,
         "Debt_Outstanding": df["Debt_Outstanding"].values, "Operating_Cash_Flow": df["Operating_Cash_Flow"].values,
+        "Unused_Capital": df["Unused_Capital"].values
     })
     chart_df['Year'] = chart_df['month'] / 12.0
 
@@ -239,15 +226,13 @@ if not df.empty:
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Amount ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, SECONDARY, ACCENT]))
     ).properties(height=300, title="Distributions vs Contributions")
-    st.altair_chart(c1, use_container_width=True)
-
+    
     c2 = alt.Chart(chart_df).transform_fold(
         ["Total_Interest_Earned","Total_Interest_Incurred"], as_=["Type","Value"]
     ).mark_line().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Amount ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[ACCENT, SECONDARY]), legend=alt.Legend(title="Interest Type"))
     ).properties(height=300, title="Total Interest Earned vs. Incurred (Cash + PIK)")
-    st.altair_chart(c2, use_container_width=True)
     
     c3 = alt.Chart(chart_df).transform_fold(
         ["Assets_Outstanding","Equity_Outstanding","Debt_Outstanding"], as_=["Type","Value"]
@@ -255,8 +240,7 @@ if not df.empty:
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Outstanding ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, ACCENT, SECONDARY]))
     ).properties(height=300, title="Outstanding Balances Over Time")
-    st.altair_chart(c3, use_container_width=True)
-
+    
     c4 = alt.Chart(chart_df).mark_bar().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')),
         y=alt.Y("Operating_Cash_Flow:Q", title="Monthly Cash Flow ($)"),
@@ -266,7 +250,17 @@ if not df.empty:
             alt.value(SECONDARY)
         )
     ).properties(height=300, title="Monthly Operating Cash Flow (Surplus / Shortfall)")
+
+    c5 = alt.Chart(chart_df).mark_area(opacity=0.5, color=ACCENT).encode(
+        x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')),
+        y=alt.Y("Unused_Capital:Q", title="Capital ($)")
+    ).properties(height=300, title="Unused Capital (Dry Powder)")
+
+    st.altair_chart(c1, use_container_width=True)
+    st.altair_chart(c2, use_container_width=True)
+    st.altair_chart(c3, use_container_width=True)
     st.altair_chart(c4, use_container_width=True)
+    st.altair_chart(c5, use_container_width=True)
 
 with st.expander("View Key Model Assumptions for this Scenario"):
     st.write(f"**Fund Timeline:** A **{fund_duration_years}-year** fund with a **{investment_period}-year** investment period.")

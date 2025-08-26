@@ -151,7 +151,9 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     eq_out_path = linear_monthly_ramp(cfg.eq_ramp_by_year, months)
     
     tranche_details = []
+    total_debt_commitment = 0
     for t_idx, tranche in enumerate(cfg.debt_tranches):
+        total_debt_commitment += tranche.amount
         rate_monthly = monthly_rate_from_annual_simple(tranche.annual_rate)
         monthly_payment = 0
         if tranche.repayment_type == "Amortizing" and tranche.amortization_period_years > 0:
@@ -180,6 +182,9 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         })
 
     mod_assets_path = eq_out_path + sum(t['path'] for t in tranche_details)
+    total_commitments = cfg.equity_commitment + total_debt_commitment
+    unused_capital = total_commitments - mod_assets_path
+    
     r_asset_m_simple = monthly_rate_from_annual_simple(cfg.asset_yield_annual)
     asset_cash_income = np.zeros(months)
     mgmt_fees = np.zeros(months)
@@ -225,7 +230,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         fee_base = 0
         if cfg.mgmt_fee_basis == "Equity Commitment": fee_base = cfg.equity_commitment
         elif cfg.mgmt_fee_basis == "Total Commitment (Equity + Debt)":
-            total_debt_commitment = sum(tranche.amount for tranche in cfg.debt_tranches)
             fee_base = cfg.equity_commitment + total_debt_commitment
         else: fee_base = mod_assets_path[i]
 
@@ -281,7 +285,8 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         "GP_Contribution": gp_total_contrib,
         "Total_Interest_Earned": total_interest_earned,
         "Total_Interest_Incurred": total_interest_incurred,
-        "Operating_Cash_Flow": oper_cash_flow
+        "Operating_Cash_Flow": oper_cash_flow,
+        "Unused_Capital": unused_capital
     }, index=mi)
 
     df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Equity_Principal_Repay"]
@@ -377,22 +382,27 @@ def months_for_year(year: int) -> Tuple[int, int]:
 
 def apply_exit_scenario(
     cfg: FundConfig, wcfg: WaterfallConfig, 
-    exit_valuation_method: str, asset_multiple: float, exit_cap_rate: float,
+    exit_valuation_method: str, equity_multiple: float, exit_cap_rate: float,
     exit_years: List[int]
 ) -> Tuple[pd.DataFrame, Dict]:
     base = build_cash_flows(cfg)
     
     gross_exit_proceeds = 0
-    first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(base) -1
+    net_proceeds_to_equity = 0
     
+    first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(base) -1
+    final_debt_repayment = base.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in base.index else base['Debt_Outstanding'].iloc[-1]
+
     if exit_valuation_method == "Exit at Book Value":
         gross_exit_proceeds = base.loc[first_exit_month, 'Assets_Outstanding'] if first_exit_month in base.index else base['Assets_Outstanding'].iloc[-1]
+        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
 
-    elif exit_valuation_method == "Gross Asset Multiple":
-        total_equity_deployed = base["Equity_Outstanding"].max()
-        total_debt_drawn = base["Debt_Outstanding"].max()
-        total_capital_base = total_equity_deployed + total_debt_drawn
-        gross_exit_proceeds = total_capital_base * asset_multiple
+    elif exit_valuation_method == "Development Equity Multiple":
+        equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
+        equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
+        development_returns = equity_for_development * equity_multiple
+        net_proceeds_to_equity = equity_for_lending + development_returns
+        gross_exit_proceeds = net_proceeds_to_equity + final_debt_repayment
     
     else: # Cap Rate
         if first_exit_month in base.index:
@@ -401,9 +411,7 @@ def apply_exit_scenario(
                 gross_exit_proceeds = noi_at_exit / exit_cap_rate
         else:
             gross_exit_proceeds = 0
-
-    final_debt_repayment = base.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in base.index else base['Debt_Outstanding'].iloc[-1]
-    net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
+        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
     
     df = base.copy()
     
@@ -432,7 +440,7 @@ def apply_exit_scenario(
         if final_month in out.index:
             out.loc[final_month:, ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding']] = 0
 
-    total_capital_base = base["Equity_Outstanding"].max() + base["Debt_Outstanding"].max()
+    total_capital_base = base["Equity_Outstanding"].max() + sum(t['amount'] for t in cfg.debt_tranches)
     
     summary = {
         "Gross_Exit_Proceeds": gross_exit_proceeds,
