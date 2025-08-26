@@ -447,7 +447,7 @@ def apply_exit_scenario(
         if final_month in out.index:
             out.loc[final_month:, ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding']] = 0
 
-    total_capital_base = base["Equity_Outstanding"].max() + sum(t['amount'] for t in cfg.debt_tranches)
+    total_capital_base = base["Equity_Outstanding"].max() + sum(t.amount for t in cfg.debt_tranches)
     
     summary = {
         "Gross_Exit_Proceeds": gross_exit_proceeds,
@@ -459,5 +459,6 @@ def apply_exit_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+
 
 
