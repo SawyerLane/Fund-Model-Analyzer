@@ -374,34 +374,54 @@ def months_for_year(year: int) -> Tuple[int, int]:
     end = year * 12
     return start, end
 
-def apply_equity_multiple_scenario(
-    cfg: FundConfig, wcfg: WaterfallConfig, equity_multiple: float,
-    exit_years: List[int], exit_weights: List[float]
+def apply_exit_scenario(
+    cfg: FundConfig, wcfg: WaterfallConfig, 
+    exit_valuation_method: str, asset_multiple: float, exit_cap_rate: float,
+    exit_years: List[int]
 ) -> Tuple[pd.DataFrame, Dict]:
     base = build_cash_flows(cfg)
     
-    equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
-    equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
-    total_equity_returns = equity_for_lending + (equity_for_development * equity_multiple)
+    gross_exit_proceeds = 0
+    first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(base) -1
+    
+    if exit_valuation_method == "Exit at Book Value":
+        gross_exit_proceeds = base.loc[first_exit_month, 'Assets_Outstanding'] if first_exit_month in base.index else base['Assets_Outstanding'].iloc[-1]
+
+    elif exit_valuation_method == "Gross Asset Multiple":
+        total_equity_deployed = base["Equity_Outstanding"].max()
+        total_debt_drawn = base["Debt_Outstanding"].max()
+        total_capital_base = total_equity_deployed + total_debt_drawn
+        gross_exit_proceeds = total_capital_base * asset_multiple
+    
+    else: # Cap Rate
+        if first_exit_month in base.index:
+            noi_at_exit = base.loc[first_exit_month, 'Total_Interest_Earned'] * 12
+            if exit_cap_rate > 0:
+                gross_exit_proceeds = noi_at_exit / exit_cap_rate
+        else:
+            gross_exit_proceeds = 0
+
+    final_debt_repayment = base.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in base.index else base['Debt_Outstanding'].iloc[-1]
+    net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
     
     df = base.copy()
     
     df["Equity_Distributable_BeforeTopoff"] = base["Equity_Distributable_BeforeTopoff"] - base["Equity_Principal_Repay"]
     df["Equity_Principal_Repay"] = 0.0
+    df["Debt_Principal_Repay"] = 0.0
 
-    equity_returns_schedule = pd.Series(0.0, index=df.index)
-    total_weight = sum(exit_weights)
-    if total_weight > 0:
-        for year, weight in zip(exit_years, exit_weights):
+    if exit_years:
+        debt_repay_per_year = final_debt_repayment / len(exit_years)
+        equity_dist_per_year = net_proceeds_to_equity / len(exit_years)
+        
+        for year in exit_years:
             start_month, end_month = months_for_year(year)
-            months_in_year = [m for m in range(start_month, end_month + 1) if m in equity_returns_schedule.index]
+            months_in_year = [m for m in range(start_month, end_month + 1) if m in df.index]
             if not months_in_year: continue
-            year_return_amount = total_equity_returns * (weight / total_weight)
-            monthly_return = year_return_amount / len(months_in_year)
-            equity_returns_schedule.loc[months_in_year] += monthly_return
-    
-    df["Equity_Distributable_BeforeTopoff"] += equity_returns_schedule
-    
+            
+            df.loc[months_in_year, "Debt_Principal_Repay"] += debt_repay_per_year / len(months_in_year)
+            df.loc[months_in_year, "Equity_Distributable_BeforeTopoff"] += equity_dist_per_year / len(months_in_year)
+
     out = allocate_waterfall_monthly(df, wcfg)
 
     if exit_years:
@@ -409,18 +429,21 @@ def apply_equity_multiple_scenario(
         last_month_of_fund = cfg.fund_duration_years * 12
         final_month = min(last_exit_month, last_month_of_fund)
         if final_month in out.index:
-            out.loc[final_month:, 'Assets_Outstanding'] = 0
-            out.loc[final_month:, 'Equity_Outstanding'] = 0
-            out.loc[final_month:, 'Debt_Outstanding'] = 0
+            out.loc[final_month:, ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding']] = 0
 
+    total_capital_base = base["Equity_Outstanding"].max() + base["Debt_Outstanding"].max()
+    
     summary = {
-        "Equity_Multiple_Input": equity_multiple, "Total_Equity_Returns": total_equity_returns,
-        "Gross_Equity_MOIC": total_equity_returns / max(cfg.equity_commitment, 1e-9),
+        "Gross_Exit_Proceeds": gross_exit_proceeds,
+        "Gross_MOIC_Total_Capital": gross_exit_proceeds / max(total_capital_base, 1e-9) if total_capital_base > 0 else 0,
+        "Net_Proceeds_to_Equity": net_proceeds_to_equity,
+        "Net_Equity_Multiple": net_proceeds_to_equity / max(cfg.equity_commitment, 1e-9) if cfg.equity_commitment > 0 else 0,
         "LP_MOIC": out.attrs.get("LP_MOIC", np.nan), "GP_MOIC": out.attrs.get("GP_MOIC", np.nan),
         "LP_IRR_annual": out.attrs.get("LP_IRR_annual", np.nan),
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+
 
 
 

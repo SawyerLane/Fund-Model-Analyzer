@@ -6,7 +6,7 @@ from typing import List, Optional, Literal, Tuple, Dict
 import altair as alt
 
 from config import FundConfig, WaterfallConfig, ScenarioConfig, WaterfallTier, DebtTrancheConfig
-from fund_model import apply_equity_multiple_scenario
+from fund_model import apply_exit_scenario
 
 def format_metric(value, format_str=",.2f", suffix=""):
     """Formats a number for display in st.metric, handling non-finite values."""
@@ -117,17 +117,33 @@ with st.sidebar:
             st.text_input("GP Split (%)", value=f"{gp_split_pct:.2f}", key=f"gp_{i}", disabled=True)
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
 
-    equity_multiple = st.number_input("Equity Investment Multiple", value=2.0, step=0.1, format="%.2f", help="The target multiple on total equity committed. E.g., 2.0x on $30M equity means $60M of total equity returns.")
+    st.subheader("Exit Scenario")
+    exit_valuation_method = st.selectbox(
+        "Exit Valuation Method", 
+        ["Exit at Book Value", "Gross Asset Multiple", "Capitalization Rate (Cap Rate)"],
+        index=0,
+        help="Choose how the fund's exit value is determined. 'Book Value' is an organic return. 'Gross Asset Multiple' is based on total capital. 'Cap Rate' is based on the fund's income stream."
+    )
+    
+    asset_multiple = 0
+    exit_cap_rate = 0
+    if exit_valuation_method == "Gross Asset Multiple":
+        asset_multiple = st.number_input("Gross Asset Multiple at Exit", value=1.5, step=0.1, format="%.2f", 
+                                         help="The multiple on total deployed capital (Equity + Debt) used to determine the gross asset value at exit.")
+    elif exit_valuation_method == "Capitalization Rate (Cap Rate)":
+        exit_cap_rate = st.number_input("Exit Cap Rate (%)", value=6.0, step=0.25, format="%.2f",
+                                        help="The capitalization rate applied to the fund's net operating income (NOI) to determine the exit value.") / 100.0
+
     default_exit_start = max(1, fund_duration_years - 1)
     default_exit_end = fund_duration_years
     exit_year_range = st.slider(
-        "Select Exit Years for Equity Returns",
+        "Select Exit Years",
         min_value=1, max_value=fund_duration_years,
         value=(default_exit_start, default_exit_end),
-        help="The year(s) over which the fund's assets are sold and the equity multiple is realized. Proceeds are distributed evenly over this period."
+        help="The year(s) over which the fund's assets are sold. Proceeds are distributed evenly over this period."
     )
     exit_years = list(range(exit_year_range[0], exit_year_range[1] + 1))
-    st.caption(f"Returns will be distributed evenly across years: {exit_years}")
+    st.caption(f"Exit proceeds will be realized across years: {exit_years}")
 
 cfg = FundConfig(
     fund_duration_years=fund_duration_years, investment_period_years=investment_period,
@@ -139,18 +155,21 @@ cfg = FundConfig(
 )
 wcfg = WaterfallConfig(tiers=tiers, pref_then_roc_enabled=roc_first_enabled)
 
-total_fund_debt = sum(t.amount for t in cfg.debt_tranches)
+total_fund_debt_commitment = sum(t.amount for t in cfg.debt_tranches)
 with st.spinner("Running scenario..."):
-    df, summary = apply_equity_multiple_scenario(
-        cfg, wcfg, equity_multiple,
-        exit_years=exit_years, exit_weights=[1/len(exit_years)]*len(exit_years) if exit_years else []
+    df, summary = apply_exit_scenario(
+        cfg, wcfg, 
+        exit_valuation_method=exit_valuation_method,
+        asset_multiple=asset_multiple,
+        exit_cap_rate=exit_cap_rate,
+        exit_years=exit_years
     )
 
 st.subheader("Model Outcomes")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Equity Multiple Input", format_metric(summary.get("Equity_Multiple_Input"), suffix="x"))
-    st.metric("Gross Equity MOIC", format_metric(summary.get("Gross_Equity_MOIC"), suffix="x"))
+    st.metric("Gross Asset Value at Exit", f"${summary.get('Gross_Exit_Proceeds', 0):,.0f}")
+    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):.2f}x")
 with col2:
     st.metric("LP MOIC (net)", format_metric(summary.get("LP_MOIC"), suffix="x"))
     st.metric("LP IRR (annual)", format_metric(summary.get("LP_IRR_annual", 0) * 100, suffix="%"))
@@ -158,8 +177,8 @@ with col3:
     st.metric("GP MOIC", format_metric(summary.get("GP_MOIC"), suffix="x"))
     st.metric("GP IRR (annual)", format_metric(summary.get("GP_IRR_annual", 0) * 100, suffix="%"))
 with col4:
-    st.metric("Total Equity Returns", f'${summary.get("Total_Equity_Returns", 0):,.0f}')
-    st.caption(f'Distributed across years {exit_year_range[0]}-{exit_year_range[1]}')
+    st.metric("Net Proceeds to Equity", f'${summary.get("Net_Proceeds_to_Equity", 0):,.0f}')
+    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):.2f}x")
 
 st.markdown("---")
 st.subheader("Fund Cash Flows")
@@ -274,4 +293,3 @@ with st.expander("View Key Model Assumptions for this Scenario"):
             st.write(f"• **Tier {i+1}**: Until LP IRR reaches {tier.until_annual_irr*100:.1f}%, profits are split {tier.lp_split*100:.0f}%/{tier.gp_split*100:.0f}% to LP/GP.")
         else:
             st.write(f"• **Final Tier**: Above all other hurdles, profits are split {tier.lp_split*100:.0f}%/{tier.gp_split*100:.0f}% to LP/GP.")
-            
