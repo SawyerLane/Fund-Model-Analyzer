@@ -7,16 +7,56 @@ from typing import List, Optional, Literal, Tuple, Dict
 from config import FundConfig, WaterfallConfig, ScenarioConfig, WaterfallTier
 
 def monthly_rate_from_annual_eff(annual_eff: float) -> float:
+    """
+    Converts an effective annual interest rate to an effective monthly rate.
+    This is used for calculations where interest compounds monthly.
+    
+    Args:
+        annual_eff: The effective annual interest rate (e.g., 0.08 for 8%).
+    
+    Returns:
+        The equivalent effective monthly interest rate.
+    """
     if annual_eff is None: return None
     return (1.0 + annual_eff)**(1.0/12.0) - 1.0
 
 def monthly_rate_from_annual_simple(annual: float) -> float:
+    """
+    Converts a simple annual interest rate to a simple monthly rate.
+    This is typically used for non-compounding interest calculations within a period.
+    
+    Args:
+        annual: The simple annual interest rate (e.g., 0.09 for 9%).
+        
+    Returns:
+        The equivalent simple monthly interest rate.
+    """
     return annual / 12.0
 
 def make_month_index(months: int) -> pd.RangeIndex:
+    """
+    Creates a pandas RangeIndex for the model's timeline, starting from month 1.
+    
+    Args:
+        months: The total number of months in the fund's life.
+        
+    Returns:
+        A pandas RangeIndex from 1 to `months`.
+    """
     return pd.RangeIndex(1, months+1, name="month")
 
-def linear_monthly_ramp(cum_targets_by_year, months=180) -> np.ndarray:
+def linear_monthly_ramp(cum_targets_by_year: List[float], months: int) -> np.ndarray:
+    """
+    Generates a monthly cumulative schedule by linearly interpolating between year-end targets.
+    This is used to model the gradual deployment of capital.
+    
+    Args:
+        cum_targets_by_year: A list of cumulative capital amounts at the end of each year.
+        months: The total number of months for the schedule.
+        
+    Returns:
+        A NumPy array representing the cumulative amount outstanding for each month.
+    """
     years = len(cum_targets_by_year)
     out = np.zeros(months)
     prev_cum = 0.0
@@ -32,25 +72,47 @@ def linear_monthly_ramp(cum_targets_by_year, months=180) -> np.ndarray:
         out[years*12:] = prev_cum
     return out
 
-def npv(rate: float, cashflows, t_index=None) -> float:
+def npv(rate: float, cashflows: np.ndarray, t_index: np.ndarray = None) -> float:
+    """
+    Calculates the Net Present Value (NPV) of a series of cash flows.
+    
+    Args:
+        rate: The discount rate per period.
+        cashflows: An array of cash flows.
+        t_index: An array of the time periods corresponding to each cash flow.
+        
+    Returns:
+        The calculated NPV as a float.
+    """
     if rate is None or np.isnan(rate): return np.nan
     cf = np.asarray(cashflows, dtype=float)
     times = (np.arange(1, len(cf) + 1) if t_index is None else np.asarray(t_index, dtype=float))
     if len(cf) == 0 or len(times) != len(cf) or (1.0 + rate) <= 0.0: return np.nan
     return float(np.sum(cf / ((1.0 + rate) ** times)))
 
-def solve_irr_bisect(cashflows, t_index=None, lo=-0.9999, hi=1.0, tol=1e-7, max_iter=200) -> float:
+def solve_irr_bisect(cashflows: np.ndarray, t_index: np.ndarray = None, lo: float = -0.9999, hi: float = 1.0, tol: float = 1e-7) -> float:
+    """
+    Calculates the Internal Rate of Return (IRR) for a series of cash flows using a robust solver.
+    
+    Args:
+        cashflows: An array of cash flows (positive for inflows, negative for outflows).
+        t_index: An array of time periods for each cash flow.
+        
+    Returns:
+        The calculated IRR per period, or NaN if no solution is found.
+    """
     def f(r): return npv(r, cashflows, t_index=t_index)
+    
     if np.sum(cashflows) <= 0:
         try:
-            return brentq(f, lo, 0, xtol=tol, maxiter=max_iter)
+            return brentq(f, lo, 0, xtol=tol)
         except (RuntimeError, ValueError): return np.nan
     try:
-        return brentq(f, 0, hi, xtol=tol, maxiter=max_iter)
+        return brentq(f, 0, hi, xtol=tol)
     except (RuntimeError, ValueError):
         f_lo, f_hi = f(lo), f(hi)
         if np.isnan(f_lo) or np.isnan(f_hi) or f_lo * f_hi > 0: return np.nan
-        for _ in range(max_iter):
+        for _ in range(100):
             mid = 0.5 * (lo + hi)
             if hi - lo < tol: return mid
             f_mid = f(mid)
@@ -61,10 +123,29 @@ def solve_irr_bisect(cashflows, t_index=None, lo=-0.9999, hi=1.0, tol=1e-7, max_
         return mid
 
 def monthly_to_annual_irr(mr: float) -> float:
+    """
+    Converts a monthly IRR to an annualized IRR.
+    
+    Args:
+        mr: The effective monthly IRR.
+        
+    Returns:
+        The equivalent effective annual IRR.
+    """
     if mr is None or np.isnan(mr): return np.nan
     return (1.0 + mr) ** 12 - 1.0
 
 def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
+    """
+    Constructs the main monthly cash flow schedule for the fund before any waterfall distributions.
+    This function models capital deployment, income, expenses, and debt service.
+    
+    Args:
+        cfg: The FundConfig object containing all the primary inputs for the model.
+        
+    Returns:
+        A pandas DataFrame with the detailed monthly cash flows.
+    """
     months = cfg.fund_duration_years * 12
     mi = make_month_index(months)
     eq_out_path = linear_monthly_ramp(cfg.eq_ramp_by_year, months)
@@ -299,11 +380,8 @@ def apply_equity_multiple_scenario(
 ) -> Tuple[pd.DataFrame, Dict]:
     base = build_cash_flows(cfg)
     
-    # +++ FIX: Correctly calculate total returns for the hybrid equity model +++
     equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
     equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
-    
-    # The lending portion returns its principal (1.0x), the development portion gets the multiple
     total_equity_returns = equity_for_lending + (equity_for_development * equity_multiple)
     
     df = base.copy()
@@ -343,6 +421,7 @@ def apply_equity_multiple_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+
 
 
 

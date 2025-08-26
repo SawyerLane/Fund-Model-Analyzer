@@ -274,6 +274,4 @@ with st.expander("View Key Model Assumptions for this Scenario"):
             st.write(f"• **Tier {i+1}**: Until LP IRR reaches {tier.until_annual_irr*100:.1f}%, profits are split {tier.lp_split*100:.0f}%/{tier.gp_split*100:.0f}% to LP/GP.")
         else:
             st.write(f"• **Final Tier**: Above all other hurdles, profits are split {tier.lp_split*100:.0f}%/{tier.gp_split*100:.0f}% to LP/GP.")
-
-
-
+            
