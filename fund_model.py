@@ -459,6 +459,3 @@ def apply_exit_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
-
-
-
