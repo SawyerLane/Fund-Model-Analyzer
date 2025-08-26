@@ -188,12 +188,12 @@ with tab1:
     st.caption("Detailed monthly cash flows for the life of the fund.")
     show_cols = [
         "Assets_Outstanding","Equity_Outstanding","Debt_Outstanding", "Asset_Interest_Income",
-        "Mgmt_Fees","Opex","Debt_Interest", "Equity_Contribution","LP_Contribution","GP_Contribution",
+        "Mgmt_Fees","Opex","Debt_Interest", "Operating_Shortfall", "LP_Contribution","GP_Contribution",
         "Debt_Principal_Repay", "LP_Distribution","GP_Distribution","Tier_Used",
     ]
     available_cols = [col for col in show_cols if col in df.columns]
     display_df_monthly = df[available_cols].copy()
-    numeric_cols = [c for c in display_df_monthly.columns if c not in ["Tier_Used"]]
+    numeric_cols = [c for c in display_df_monthly.columns if c not in ["Tier_Used", "Operating_Shortfall"]]
     st.dataframe(display_df_monthly.style.format({c: "{:,.0f}" for c in numeric_cols}))
     csv_monthly = df.to_csv(index=True).encode("utf-8")
     st.download_button("Download Monthly (CSV)", csv_monthly, file_name="fund_monthly_cashflows.csv", mime="text/csv")
@@ -204,7 +204,7 @@ with tab2:
     annual_df['year'] = (annual_df.index - 1) // 12 + 1
     agg_rules = {
         'Asset_Interest_Income': 'sum', 'Mgmt_Fees': 'sum', 'Opex': 'sum',
-        'Debt_Interest': 'sum', 'Equity_Contribution': 'sum', 'LP_Contribution': 'sum',
+        'Debt_Interest': 'sum', 'Operating_Shortfall': 'sum', 'LP_Contribution': 'sum',
         'GP_Contribution': 'sum', 'Debt_Principal_Repay': 'sum', 'LP_Distribution': 'sum',
         'GP_Distribution': 'sum', 'Assets_Outstanding': 'last',
         'Equity_Outstanding': 'last', 'Debt_Outstanding': 'last',
@@ -229,7 +229,7 @@ if not df.empty:
         "Total_Interest_Earned": df["Total_Interest_Earned"].values,
         "Total_Interest_Incurred": df["Total_Interest_Incurred"].values,
         "Assets_Outstanding": df["Assets_Outstanding"].values, "Equity_Outstanding": df["Equity_Outstanding"].values,
-        "Debt_Outstanding": df["Debt_Outstanding"].values,
+        "Debt_Outstanding": df["Debt_Outstanding"].values, "Operating_Shortfall": df["Operating_Shortfall"].values,
     })
     chart_df['Year'] = chart_df['month'] / 12.0
 
@@ -248,7 +248,7 @@ if not df.empty:
         color=alt.Color("Type:N", scale=alt.Scale(range=[ACCENT, SECONDARY]), legend=alt.Legend(title="Interest Type"))
     ).properties(height=300, title="Total Interest Earned vs. Incurred (Cash + PIK)")
     st.altair_chart(c2, use_container_width=True)
-
+    
     c3 = alt.Chart(chart_df).transform_fold(
         ["Assets_Outstanding","Equity_Outstanding","Debt_Outstanding"], as_=["Type","Value"]
     ).mark_line().encode(
@@ -256,6 +256,12 @@ if not df.empty:
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, ACCENT, SECONDARY]))
     ).properties(height=300, title="Outstanding Balances Over Time")
     st.altair_chart(c3, use_container_width=True)
+
+    c4 = alt.Chart(chart_df[chart_df['Operating_Shortfall'] < 0]).mark_bar(color=SECONDARY).encode(
+        x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')),
+        y=alt.Y("Operating_Shortfall:Q", title="Monthly Shortfall ($)")
+    ).properties(height=300, title="Operating Shortfall (Monthly)")
+    st.altair_chart(c4, use_container_width=True)
 
 with st.expander("View Key Model Assumptions for this Scenario"):
     st.write(f"**Fund Timeline:** A **{fund_duration_years}-year** fund with a **{investment_period}-year** investment period.")

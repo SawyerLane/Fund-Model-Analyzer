@@ -280,7 +280,8 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         "Equity_Contribution": eq_contrib_deploy, "LP_Contribution": lp_total_contrib,
         "GP_Contribution": gp_total_contrib,
         "Total_Interest_Earned": total_interest_earned,
-        "Total_Interest_Incurred": total_interest_incurred
+        "Total_Interest_Incurred": total_interest_incurred,
+        "Operating_Shortfall": shortfall
     }, index=mi)
 
     df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Equity_Principal_Repay"]
