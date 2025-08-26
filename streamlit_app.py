@@ -34,7 +34,8 @@ with st.sidebar:
 
     st.markdown("### 💰 Fund Assumptions")
     
-    with st.expander("Asset Income & Lending", expanded=True):
+    # --- UI FIX: Added emojis to expander labels ---
+    with st.expander("💵 Asset Income & Lending", expanded=True):
         asset_yield = st.number_input("Borrower Yield (annual, %)", value=9.0, step=0.25, format="%.2f", help="The annualized interest rate the fund earns on its income-producing assets.")/100.0
         asset_income_type = st.selectbox(
             "Borrower Interest Type", options=["PIK", "Cash"], index=0, 
@@ -45,7 +46,8 @@ with st.sidebar:
             help="Percentage of deployed equity that earns the Asset Yield alongside debt."
         ) / 100.0
 
-    with st.expander("Debt Structure", expanded=True):
+    # --- UI FIX: Added emojis to expander labels ---
+    with st.expander("🏦 Debt Structure", expanded=True):
         num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=2, step=1, help="The number of separate debt facilities the fund will use.")
         debt_tranches = []
         default_tranches = [
@@ -62,8 +64,6 @@ with st.sidebar:
             draw_end = st.number_input(f"Drawdown End Month", value=defaults["draw_e"], step=1, key=f"d_draw_e_{i}", help="The month this debt facility is fully drawn.")
             maturity = st.number_input(f"Maturity Month", value=defaults["mat"], step=12, key=f"d_mat_{i}", help="The month the principal of this tranche is due to be repaid.")
             
-            # --- AMORTIZING LOGIC CLEANUP ---
-            # Simplified the selectbox options and removed the .split() logic
             repayment_type = st.selectbox(f"Repayment Type", ["Interest-Only", "Amortizing"], key=f"d_repay_type_{i}", help="Interest-Only: Full principal is paid at maturity. Amortizing: Regular principal payments are made over a set period.")
             amortization_years = 0
             if repayment_type == "Amortizing":
@@ -76,7 +76,8 @@ with st.sidebar:
             )
             debt_tranches.append(tranche)
     
-    with st.expander("Fees & Opex", expanded=True):
+    # --- UI FIX: Added emojis to expander labels ---
+    with st.expander("🧾 Fees & Opex", expanded=True):
         investment_period = st.number_input(
             "Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5, step=1,
             help="The period during which the fund will call and deploy capital. This also determines the timing of the management fee step-down."
@@ -92,7 +93,8 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📈 Scenario Drivers")
 
-    with st.expander(f"Equity Deployment (during {investment_period}-Year Investment Period)"):
+    # --- UI FIX: Added emojis to expander labels ---
+    with st.expander(f"🛠️ Equity Deployment (during {investment_period}-Year Investment Period)"):
         eq_ramp = []
         min_val_for_year = 0.0
         for y in range(1, investment_period + 1):
@@ -109,7 +111,8 @@ with st.sidebar:
                 eq_ramp.append(eq_val)
                 min_val_for_year = eq_val
 
-    with st.expander("Waterfall Structure"):
+    # --- UI FIX: Added emojis to expander labels ---
+    with st.expander("🌊 Waterfall Structure"):
         roc_first_enabled = st.toggle("Enable Return of Capital (ROC) First", value=True, help="If ON, all capital is returned to partners before profit is split. If OFF, profit is split based purely on IRR hurdles.")
         tiers = []
         tier_defaults = [(8.0, 1.00), (12.0, 0.72), (15.0, 0.63), (20.0, 0.60), (None, 0.54)]
@@ -122,7 +125,7 @@ with st.sidebar:
             st.text_input("GP Split (%)", value=f"{gp_split_pct:.2f}", key=f"gp_{i}", disabled=True)
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
 
-    st.subheader("Exit Scenario")
+    st.subheader("🏁 Exit Scenario")
     equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
                                      help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
 
@@ -148,7 +151,6 @@ cfg = FundConfig(
 wcfg = WaterfallConfig(tiers=tiers, pref_then_roc_enabled=roc_first_enabled)
 
 with st.spinner("Running scenario..."):
-    # --- SIMPLIFIED FUNCTION CALL ---
     df, summary = run_fund_scenario(
         cfg=cfg, 
         wcfg=wcfg, 
@@ -215,10 +217,7 @@ with tab2:
 st.markdown("---")
 st.subheader("Charts")
 if not df.empty:
-    # --- CHARTING OPTIMIZATION ---
-    # Add 'Year' column directly to the main DataFrame
     df['Year'] = df.index / 12.0
-    # All charts now use the original 'df' DataFrame directly
 
     c1 = alt.Chart(df).transform_fold(
         ["LP_Distribution","GP_Distribution","Equity_Contribution"], as_=["Type","Value"]
