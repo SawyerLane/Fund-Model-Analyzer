@@ -281,7 +281,7 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         "GP_Contribution": gp_total_contrib,
         "Total_Interest_Earned": total_interest_earned,
         "Total_Interest_Incurred": total_interest_incurred,
-        "Operating_Shortfall": shortfall
+        "Operating_Cash_Flow": oper_cash_flow
     }, index=mi)
 
     df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Equity_Principal_Repay"]
@@ -444,8 +444,3 @@ def apply_exit_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
-
-
-
-
-
