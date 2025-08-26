@@ -298,7 +298,14 @@ def apply_equity_multiple_scenario(
     exit_years: List[int], exit_weights: List[float]
 ) -> Tuple[pd.DataFrame, Dict]:
     base = build_cash_flows(cfg)
-    total_equity_returns = cfg.equity_commitment * equity_multiple
+    
+    # +++ FIX: Correctly calculate total returns for the hybrid equity model +++
+    equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
+    equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
+    
+    # The lending portion returns its principal (1.0x), the development portion gets the multiple
+    total_equity_returns = equity_for_lending + (equity_for_development * equity_multiple)
+    
     df = base.copy()
     
     df["Equity_Distributable_BeforeTopoff"] = base["Equity_Distributable_BeforeTopoff"] - base["Equity_Principal_Repay"]
@@ -336,7 +343,6 @@ def apply_equity_multiple_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
-
 
 
 
