@@ -141,18 +141,28 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     total_interest_earned = np.zeros(months)
     total_interest_incurred = np.zeros(months)
 
-    # --- NEW: Treasury Management Logic ---
     uncalled_equity = cfg.equity_commitment - eq_out_path
     r_treasury_m_simple = monthly_rate_from_annual_simple(cfg.treasury_yield_annual)
     treasury_income = uncalled_equity * r_treasury_m_simple
+
+    # --- NEW LOGIC: Determine when asset income should start ---
+    first_debt_draw_month = months + 1 # Default to a month that will never happen
+    if any(t['path'].sum() > 0 for t in tranche_details):
+        combined_debt_path = sum(t['path'] for t in tranche_details)
+        # Find the index of the first month where debt > 0
+        first_debt_draw_idx = np.argmax(combined_debt_path > 0)
+        first_debt_draw_month = first_debt_draw_idx + 1
 
     for i in range(months):
         month_num = i + 1
         current_debt_outstanding = sum(t['outstanding'][i] for t in tranche_details)
         
-        income_base = current_debt_outstanding + (eq_out_path[i] * cfg.equity_for_lending_pct)
+        # --- MODIFIED LOGIC: Calculate asset income only after debt is drawn ---
+        accrual = 0.0
+        if month_num >= first_debt_draw_month:
+            income_base = current_debt_outstanding + (eq_out_path[i] * cfg.equity_for_lending_pct)
+            accrual = income_base * r_asset_m_simple
         
-        accrual = income_base * r_asset_m_simple
         total_interest_earned[i] = accrual
         
         if cfg.asset_income_type == "Cash":
@@ -204,7 +214,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         remaining_debt_at_end = sum(t['outstanding'][final_month_idx] for t in tranche_details)
         debt_principal_repay[final_month_idx] += remaining_debt_at_end
 
-    # --- UPDATED: Treasury income now offsets expenses ---
     oper_cash_flow = asset_cash_income + treasury_income - mgmt_fees - opex - debt_interest_cash
     shortfall = np.minimum(oper_cash_flow, 0)
     
@@ -222,7 +231,7 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     df = pd.DataFrame({
         "Assets_Outstanding": mod_assets_path, "Equity_Outstanding": eq_out_path,
         "Debt_Outstanding": final_debt_out_path, "Asset_Interest_Income": asset_cash_income,
-        "Treasury_Income": treasury_income, # --- NEW: Added for reporting
+        "Treasury_Income": treasury_income,
         "Mgmt_Fees": mgmt_fees, "Opex": opex, "Debt_Interest": debt_interest_cash,
         "Debt_Principal_Repay": debt_principal_repay, "Equity_Principal_Repay": equity_principal_repay,
         "Equity_Contribution": eq_contrib_deploy, "LP_Contribution": lp_total_contrib,
@@ -380,4 +389,3 @@ def run_fund_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
-
