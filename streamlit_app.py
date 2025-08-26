@@ -32,6 +32,7 @@ with st.sidebar:
 
     st.markdown("### 💰 Fund Assumptions")
     
+    # --- UI FIX APPLIED ---
     with st.expander("💵 Asset Income & Lending", expanded=True):
         asset_yield = st.number_input("Borrower Yield (annual, %)", value=9.0, step=0.25, format="%.2f", help="The annualized interest rate the fund earns on its income-producing assets.")/100.0
         asset_income_type = st.selectbox(
@@ -43,6 +44,7 @@ with st.sidebar:
             help="Percentage of deployed equity that earns the Asset Yield alongside debt."
         ) / 100.0
 
+    # --- UI FIX APPLIED ---
     with st.expander("🏦 Debt Structure", expanded=True):
         num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=2, step=1, help="The number of separate debt facilities the fund will use.")
         debt_tranches = []
@@ -71,7 +73,7 @@ with st.sidebar:
             )
             debt_tranches.append(tranche)
 
-    # --- NEW: UI for Treasury Management ---
+    # --- UI FIX APPLIED ---
     with st.expander("🏛️ Treasury Management"):
         enable_treasury = st.toggle("Enable Treasury Management on Unused Equity", value=False)
         treasury_yield = 0.0
@@ -79,6 +81,7 @@ with st.sidebar:
             treasury_yield = st.number_input("Short-term Investment Yield (annual, %)", value=4.5, step=0.1, format="%.2f",
                                            help="Annual yield earned on uncalled equity commitment, used to offset fund expenses.") / 100.0
     
+    # --- UI FIX APPLIED ---
     with st.expander("🧾 Fees & Opex", expanded=True):
         investment_period = st.number_input(
             "Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5, step=1,
@@ -95,6 +98,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📈 Scenario Drivers")
 
+    # --- UI FIX APPLIED ---
     with st.expander(f"🛠️ Equity Deployment (during {investment_period}-Year Investment Period)"):
         eq_ramp = []
         min_val_for_year = 0.0
@@ -112,6 +116,7 @@ with st.sidebar:
                 eq_ramp.append(eq_val)
                 min_val_for_year = eq_val
 
+    # --- UI FIX APPLIED ---
     with st.expander("🌊 Waterfall Structure"):
         roc_first_enabled = st.toggle("Enable Return of Capital (ROC) First", value=True, help="If ON, all capital is returned to partners before profit is split. If OFF, profit is split based purely on IRR hurdles.")
         tiers = []
@@ -145,7 +150,7 @@ cfg = FundConfig(
     equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
     debt_tranches=debt_tranches, asset_yield_annual=asset_yield, asset_income_type=asset_income_type,
     equity_for_lending_pct=equity_for_lending_pct, 
-    treasury_yield_annual=treasury_yield, # --- NEW: Pass treasury yield to config ---
+    treasury_yield_annual=treasury_yield,
     mgmt_fee_basis=mgmt_fee_basis,
     waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp, mgmt_fee_annual_early=mgmt_early,
     mgmt_fee_annual_late=mgmt_late, opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp,
@@ -181,7 +186,6 @@ tab1, tab2 = st.tabs(["Monthly View", "Annual Summary"])
 
 with tab1:
     st.caption("Detailed monthly cash flows for the life of the fund.")
-    # --- UPDATED: Added Treasury_Income to display columns ---
     show_cols = [
         "Assets_Outstanding", "Unused_Capital", "Equity_Outstanding", "Debt_Outstanding", 
         "Asset_Interest_Income", "Treasury_Income", "Mgmt_Fees", "Opex", "Debt_Interest", 
@@ -237,7 +241,7 @@ if not df.empty:
     ).properties(height=300, title="Total Interest Earned vs. Incurred (Cash + PIK)")
     
     c3 = alt.Chart(df).transform_fold(
-        ["Assets_Outstanding","Equity_Outstanding","Debt_Outstanding"], as_=["Type","Value"]
+        ["Assets_Outstanding","Equity_outstanding","Debt_Outstanding"], as_=["Type","Value"]
     ).mark_line().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Outstanding ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, ACCENT, SECONDARY]))
