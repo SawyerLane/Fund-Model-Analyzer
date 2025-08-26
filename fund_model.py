@@ -382,7 +382,7 @@ def months_for_year(year: int) -> Tuple[int, int]:
 
 def apply_exit_scenario(
     cfg: FundConfig, wcfg: WaterfallConfig, 
-    exit_valuation_method: str, equity_multiple: float, exit_cap_rate: float,
+    exit_valuation_method: str, equity_multiple: float, asset_multiple: float, exit_cap_rate: float,
     exit_years: List[int]
 ) -> Tuple[pd.DataFrame, Dict]:
     base = build_cash_flows(cfg)
@@ -403,6 +403,13 @@ def apply_exit_scenario(
         development_returns = equity_for_development * equity_multiple
         net_proceeds_to_equity = equity_for_lending + development_returns
         gross_exit_proceeds = net_proceeds_to_equity + final_debt_repayment
+    
+    elif exit_valuation_method == "Gross Asset Multiple":
+        total_equity_deployed = base["Equity_Outstanding"].max()
+        total_debt_drawn = base["Debt_Outstanding"].max()
+        total_capital_base = total_equity_deployed + total_debt_drawn
+        gross_exit_proceeds = total_capital_base * asset_multiple
+        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
     
     else: # Cap Rate
         if first_exit_month in base.index:
@@ -452,4 +459,5 @@ def apply_exit_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+
 

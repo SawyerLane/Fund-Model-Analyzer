@@ -131,6 +131,9 @@ with st.sidebar:
     if exit_valuation_method == "Development Equity Multiple":
         equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
                                          help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
+    elif exit_valuation_method == "Gross Asset Multiple":
+        asset_multiple = st.number_input("Gross Asset Multiple at Exit", value=1.5, step=0.1, format="%.2f", 
+                                         help="The multiple on total deployed capital (Equity + Debt) used to determine the gross asset value at exit.")
     elif exit_valuation_method == "Capitalization Rate (Cap Rate)":
         exit_cap_rate = st.number_input("Exit Cap Rate (%)", value=6.0, step=0.25, format="%.2f",
                                         help="The capitalization rate applied to the fund's net operating income (NOI) to determine the exit value.") / 100.0
@@ -159,7 +162,8 @@ wcfg = WaterfallConfig(tiers=tiers, pref_then_roc_enabled=roc_first_enabled)
 total_fund_debt_commitment = sum(t.amount for t in cfg.debt_tranches)
 with st.spinner("Running scenario..."):
     df, summary = apply_exit_scenario(
-        cfg, wcfg, 
+        cfg=cfg, 
+        wcfg=wcfg, 
         exit_valuation_method=exit_valuation_method,
         equity_multiple=equity_multiple,
         asset_multiple=asset_multiple,
