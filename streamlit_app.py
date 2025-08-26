@@ -118,26 +118,9 @@ with st.sidebar:
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
 
     st.subheader("Exit Scenario")
-    exit_valuation_method = st.selectbox(
-        "Exit Valuation Method", 
-        ["Exit at Book Value", "Development Equity Multiple", "Capitalization Rate (Cap Rate)"],
-        index=0,
-        help="Choose how the fund's exit value is determined. 'Book Value' is an organic return from operations. 'Development Equity Multiple' applies a multiple only to the equity used for development projects."
-    )
+    equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
+                                     help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
     
-    equity_multiple = 0
-    asset_multiple = 0
-    exit_cap_rate = 0
-    if exit_valuation_method == "Development Equity Multiple":
-        equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
-                                         help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
-    elif exit_valuation_method == "Gross Asset Multiple":
-        asset_multiple = st.number_input("Gross Asset Multiple at Exit", value=1.5, step=0.1, format="%.2f", 
-                                         help="The multiple on total deployed capital (Equity + Debt) used to determine the gross asset value at exit.")
-    elif exit_valuation_method == "Capitalization Rate (Cap Rate)":
-        exit_cap_rate = st.number_input("Exit Cap Rate (%)", value=6.0, step=0.25, format="%.2f",
-                                        help="The capitalization rate applied to the fund's net operating income (NOI) to determine the exit value.") / 100.0
-
     default_exit_start = max(1, fund_duration_years - 1)
     default_exit_end = fund_duration_years
     exit_year_range = st.slider(
@@ -162,12 +145,8 @@ wcfg = WaterfallConfig(tiers=tiers, pref_then_roc_enabled=roc_first_enabled)
 total_fund_debt_commitment = sum(t.amount for t in cfg.debt_tranches)
 with st.spinner("Running scenario..."):
     df, summary = apply_exit_scenario(
-        cfg=cfg, 
-        wcfg=wcfg, 
-        exit_valuation_method=exit_valuation_method,
+        cfg, wcfg, 
         equity_multiple=equity_multiple,
-        asset_multiple=asset_multiple,
-        exit_cap_rate=exit_cap_rate,
         exit_years=exit_years
     )
 
