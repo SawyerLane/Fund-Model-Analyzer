@@ -16,97 +16,147 @@ def format_metric(value, format_str=",.2f", suffix=""):
         return f"{value:{format_str}}{suffix}"
     return "N/A"
 
-def to_excel(df_monthly, df_annual, summary_data: dict, fund_config: FundConfig):
+def to_excel(df_monthly: pd.DataFrame, df_annual: pd.DataFrame, summary_data: dict, fund_config: FundConfig, waterfall_config: WaterfallConfig):
     """Exports dataframes to an in-memory, formatted Excel file with a summary sheet and charts."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
         # --- Create Formats ---
-        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1})
+        title_format = workbook.add_format({'bold': True, 'font_size': 16, 'font_color': '#0F4458', 'valign': 'vcenter'})
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#DDEBF7', 'border': 1})
         percent_format = workbook.add_format({'num_format': '0.00%'})
         money_format = workbook.add_format({'num_format': '$#,##0'})
         multiple_format = workbook.add_format({'num_format': '0.00"x"'})
         
-        # --- 1. Summary & Assumptions Sheet ---
-        summary_sheet = workbook.add_worksheet('Summary_&_Assumptions')
+        # --- 1. Dashboard Sheet ---
+        dash_sheet = workbook.add_worksheet('Dashboard')
+        dash_sheet.set_zoom(90)
+        dash_sheet.merge_range('B2:I2', 'Fund Model Scenario Report', title_format)
         
-        # Key Metrics
+        # Key Metrics Table
         metrics = {
-            "LP IRR (annual)": summary_data.get("LP_IRR_annual"),
-            "LP MOIC (net)": summary_data.get("LP_MOIC"),
-            "GP IRR (annual)": summary_data.get("GP_IRR_annual"),
-            "GP MOIC": summary_data.get("GP_MOIC"),
-            "Net Equity Multiple": summary_data.get("Net_Equity_Multiple"),
-            "Gross Asset Value at Exit": summary_data.get("Gross_Exit_Proceeds"),
+            "LP IRR (annual)": summary_data.get("LP_IRR_annual"), "LP MOIC (net)": summary_data.get("LP_MOIC"),
+            "GP IRR (annual)": summary_data.get("GP_IRR_annual"), "GP MOIC": summary_data.get("GP_MOIC"),
+            "Net Equity Multiple": summary_data.get("Net_Equity_Multiple"), "Gross Asset Value at Exit": summary_data.get("Gross_Exit_Proceeds"),
         }
         metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value'])
-        summary_sheet.write('A1', 'Key Metrics', header_format)
-        metrics_df.to_excel(writer, sheet_name='Summary_&_Assumptions', startrow=1, index=False)
+        dash_sheet.write('B5', 'Key Metrics', header_format)
+        metrics_df.to_excel(writer, sheet_name='Dashboard', startrow=5, startcol=1, index=False)
+        dash_sheet.set_column('B:B', 30)
+        dash_sheet.set_column('C:C', 20)
         
-        # Apply formatting to metrics
-        summary_sheet.set_column('A:A', 30)
-        summary_sheet.set_column('B:B', 20)
-        summary_sheet.conditional_format('B3:B3', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': percent_format})
-        summary_sheet.conditional_format('B4:B4', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
-        summary_sheet.conditional_format('B5:B5', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': percent_format})
-        summary_sheet.conditional_format('B6:B6', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
-        summary_sheet.conditional_format('B7:B7', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
-        summary_sheet.conditional_format('B8:B8', {'type': 'cell', 'criteria': '>=', 'value': 0, 'format': money_format})
-
-        # Key Assumptions
+        # Key Assumptions Table
         assumptions = asdict(fund_config)
-        # Clean up assumptions for display
-        assumptions.pop('debt_tranches', None)
-        assumptions.pop('tiers', None)
-        assumptions_df = pd.DataFrame(list(assumptions.items()), columns=['Assumption', 'Value'])
-        summary_sheet.write('D1', 'Key Fund Assumptions', header_format)
-        assumptions_df.to_excel(writer, sheet_name='Summary_&_Assumptions', startrow=1, startcol=3, index=False)
-        summary_sheet.set_column('D:D', 30)
-        summary_sheet.set_column('E:E', 20)
+        assumptions_to_show = {
+            'fund_duration_years': 'Fund Duration (Years)', 'investment_period_years': 'Investment Period (Years)',
+            'equity_commitment': 'Equity Commitment', 'lp_commitment': 'LP Commitment', 'gp_commitment': 'GP Commitment',
+            'asset_yield_annual': 'Asset Yield (Annual)', 'asset_income_type': 'Asset Income Type',
+            'treasury_yield_annual': 'Treasury Yield (Annual)', 'mgmt_fee_basis': 'Mgmt Fee Basis',
+            'mgmt_fee_annual_early': 'Mgmt Fee (Early %)', 'mgmt_fee_annual_late': 'Mgmt Fee (Late %)',
+            'opex_annual_fixed': 'Opex (Annual Fixed)',
+        }
+        assumptions_data = {v: assumptions[k] for k, v in assumptions_to_show.items()}
+        assumptions_df = pd.DataFrame(list(assumptions_data.items()), columns=['Assumption', 'Value'])
+        dash_sheet.write('E5', 'Fund Assumptions', header_format)
+        assumptions_df.to_excel(writer, sheet_name='Dashboard', startrow=5, startcol=4, index=False)
+        dash_sheet.set_column('E:E', 30)
+        dash_sheet.set_column('F:F', 20)
+        
+        # Debt Tranches Table
+        debt_df = pd.DataFrame([asdict(t) for t in fund_config.debt_tranches])
+        if not debt_df.empty:
+            dash_sheet.write('B20', 'Debt Structure', header_format)
+            debt_df.to_excel(writer, sheet_name='Dashboard', startrow=20, startcol=1, index=False)
+            
+        # Waterfall Tiers Table
+        waterfall_df = pd.DataFrame([{'Hurdle (IRR)': f"{t.until_annual_irr:.0%}" if t.until_annual_irr else "Final",
+                                    'LP Split': f"{t.lp_split:.0%}", 'GP Split': f"{t.gp_split:.0%}"} 
+                                   for t in waterfall_config.tiers])
+        dash_sheet.write('E20', 'Waterfall Structure', header_format)
+        waterfall_df.to_excel(writer, sheet_name='Dashboard', startrow=20, startcol=4, index=False)
 
-        # --- 2. Data Sheets with Formatting ---
+        # --- 2. Data Sheets with Enhanced Formatting ---
         df_annual.to_excel(writer, index=True, sheet_name='Annual_Summary')
         annual_sheet = writer.sheets['Annual_Summary']
         for col_num, value in enumerate(df_annual.columns.values):
             annual_sheet.write(0, col_num + 1, value, header_format)
-        annual_sheet.freeze_panes(1, 0)
-        
+        annual_sheet.freeze_panes(1, 1)
+        annual_sheet.conditional_format('K2:K{}'.format(len(df_annual)+1), {'type': 'cell', 'criteria': '<', 'value': 0, 'format': workbook.add_format({'font_color': 'red'})})
+        annual_sheet.set_column('B:Z', 18, money_format)
+
         df_monthly.to_excel(writer, index=True, sheet_name='Monthly_Cash_Flows')
         monthly_sheet = writer.sheets['Monthly_Cash_Flows']
         for col_num, value in enumerate(df_monthly.columns.values):
             monthly_sheet.write(0, col_num + 1, value, header_format)
         monthly_sheet.freeze_panes(1, 1)
+        monthly_sheet.set_column('B:Z', 18, money_format)
 
-        # --- 3. Charts Sheet ---
+        # --- 3. Expanded Charts Sheet ---
         charts_sheet = workbook.add_worksheet('Charts')
-        chart = workbook.add_chart({'type': 'line'})
+        charts_sheet.set_zoom(90)
         num_years = len(df_annual)
-        
-        # Add series to the chart: Outstanding Balances
-        chart.add_series({
-            'name':       '=Annual_Summary!$F$1',
-            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
-            'values':     '=Annual_Summary!$F$2:$F${}'.format(num_years + 1),
-        })
-        chart.add_series({
-            'name':       '=Annual_Summary!$D$1',
-            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
-            'values':     '=Annual_Summary!$D$2:$D${}'.format(num_years + 1),
-        })
-        chart.add_series({
-            'name':       '=Annual_Summary!$E$1',
-            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
-            'values':     '=Annual_Summary!$E$2:$E${}'.format(num_years + 1),
-        })
-        chart.set_title({'name': 'Outstanding Balances Over Time'})
-        chart.set_x_axis({'name': 'Year'})
-        chart.set_y_axis({'name': 'Amount ($)', 'num_format': '$#,##0'})
-        chart.set_size({'width': 720, 'height': 480})
-        charts_sheet.insert_chart('B2', chart)
 
+        # Chart 1: Outstanding Balances
+        chart1 = workbook.add_chart({'type': 'line'})
+        chart1.add_series({'name': '=Annual_Summary!$F$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$F$2:$F${num_years+1}'})
+        chart1.add_series({'name': '=Annual_Summary!$D$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$D$2:$D${num_years+1}'})
+        chart1.add_series({'name': '=Annual_Summary!$E$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$E$2:$E${num_years+1}'})
+        chart1.set_title({'name': 'Outstanding Balances Over Time'})
+        chart1.set_y_axis({'name': 'Amount ($)', 'num_format': '$#,##0'})
+        chart1.set_size({'width': 720, 'height': 400})
+        charts_sheet.insert_chart('B2', chart1)
+
+        # Chart 2: Annual Operating Cash Flow (J-Curve)
+        chart2 = workbook.add_chart({'type': 'column'})
+        chart2.add_series({'name': '=Annual_Summary!$K$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$K$2:$K${num_years+1}'})
+        chart2.set_title({'name': 'Annual Operating Cash Flow (J-Curve)'})
+        chart2.set_y_axis({'name': 'Cash Flow ($)', 'num_format': '$#,##0'})
+        chart2.set_legend({'position': 'none'})
+        chart2.set_size({'width': 720, 'height': 400})
+        charts_sheet.insert_chart('B22', chart2)
+
+        # Chart 3: Distributions vs Contributions
+        chart3 = workbook.add_chart({'type': 'column', 'subtype': 'stacked'})
+        chart3.add_series({'name': '=Annual_Summary!$L$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$L$2:$L${num_years+1}'})
+        chart3.add_series({'name': '=Annual_Summary!$M$1', 'categories': f'=Annual_Summary!$A$2:$A${num_years+1}', 'values': f'=Annual_Summary!$M$2:$M${num_years+1}'})
+        chart3.set_title({'name': 'Annual Contributions vs. Distributions'})
+        chart3.set_y_axis({'name': 'Amount ($)', 'num_format': '$#,##0'})
+        chart3.set_size({'width': 720, 'height': 400})
+        charts_sheet.insert_chart('L2', chart3)
+
+        # --- 4. Glossary Sheet ---
+        glossary_sheet = workbook.add_worksheet('Glossary')
+        glossary_data = {
+            "Term": ["Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding", "Asset_Interest_Income", "Treasury_Income", "Mgmt_Fees", "Opex", "Debt_Interest", "Operating_Cash_Flow", "LP_Contribution", "GP_Contribution", "Debt_Principal_Repay", "LP_Distribution", "GP_Distribution"],
+            "Definition": [
+                "The total value of the fund's assets, including deployed equity, debt, and any accrued PIK interest.",
+                "The cumulative amount of equity capital called from partners and deployed into assets.",
+                "The total principal balance of the fund's debt facilities, including any accrued PIK interest.",
+                "Cash interest income received from the fund's assets (borrowers).",
+                "Income earned from short-term investments on uncalled equity capital.",
+                "Management fees paid to the General Partner (GP).",
+                "Fixed operating expenses of the fund.",
+                "Cash interest paid on the fund's debt facilities.",
+                "Net cash flow from operations before capital activities (Contributions/Distributions).",
+                "Total capital provided by Limited Partners (LPs) for both investments and to cover shortfalls.",
+                "Total capital provided by the General Partner (GP) for both investments and to cover shortfalls.",
+                "Principal repayments made on the fund's debt facilities.",
+                "Total cash distributed to Limited Partners (LPs).",
+                "Total cash distributed to the General Partner (GP), including carried interest."
+            ]
+        }
+        glossary_df = pd.DataFrame(glossary_data)
+        glossary_df.to_excel(writer, sheet_name='Glossary', index=False)
+        glossary_sheet.set_column('A:A', 25)
+        glossary_sheet.set_column('B:B', 100)
+        
     processed_data = output.getvalue()
     return processed_data
+
+# The rest of the Streamlit App layout code follows...
+# It is identical to the previous version (streamlit_app_py_v10)
+# but the call to to_excel will be updated.
 
 PRIMARY = "#295DAB"
 SECONDARY = "#FBB040"
@@ -130,36 +180,20 @@ with st.sidebar:
             st.error(f"Error loading scenario file: {e}")
 
     s = st.session_state.scenario
-
     st.header("🔑 Key Inputs")
-
-    fund_duration_years = st.number_input("Fund Duration (Years)", min_value=1, max_value=30, 
-                                          value=s.get('fund_duration_years', 15), step=1)
-
-    equity_commit = st.number_input("Equity Commitment ($)", value=s.get('equity_commitment', 30_000_000.0), 
-                                    step=500_000.0, format="%.0f")
-    lp_commit = st.number_input("LP Commitment ($)", value=s.get('lp_commitment', 25_000_000.0), 
-                                step=500_000.0, format="%.0f")
-    gp_commit = st.number_input("GP Commitment ($)", value=s.get('gp_commitment', 5_000_000.0), 
-                                step=250_000.0, format="%.0f")
-
+    # (All the sidebar widget code is the same as before...)
+    fund_duration_years = st.number_input("Fund Duration (Years)", min_value=1, max_value=30, value=s.get('fund_duration_years', 15), step=1)
+    equity_commit = st.number_input("Equity Commitment ($)", value=s.get('equity_commitment', 30_000_000.0), step=500_000.0, format="%.0f")
+    lp_commit = st.number_input("LP Commitment ($)", value=s.get('lp_commitment', 25_000_000.0), step=500_000.0, format="%.0f")
+    gp_commit = st.number_input("GP Commitment ($)", value=s.get('gp_commitment', 5_000_000.0), step=250_000.0, format="%.0f")
     st.markdown("### 💰 Fund Assumptions")
-    
     with st.expander("💵 Asset Income & Lending", expanded=True):
-        asset_yield = st.number_input("Borrower Yield (annual, %)", value=s.get('asset_yield_pct', 9.0), 
-                                      step=0.25, format="%.2f") / 100.0
-        asset_income_type = st.selectbox("Borrower Interest Type", options=["PIK", "Cash"], 
-                                         index=["PIK", "Cash"].index(s.get('asset_income_type', "PIK")))
-        equity_for_lending_pct = st.slider("Equity for Lending (%)", 0, 100, 
-                                           s.get('equity_for_lending_pct', 0)) / 100.0
-
+        asset_yield = st.number_input("Borrower Yield (annual, %)", value=s.get('asset_yield_pct', 9.0), step=0.25, format="%.2f") / 100.0
+        asset_income_type = st.selectbox("Borrower Interest Type", options=["PIK", "Cash"], index=["PIK", "Cash"].index(s.get('asset_income_type', "PIK")))
+        equity_for_lending_pct = st.slider("Equity for Lending (%)", 0, 100, s.get('equity_for_lending_pct', 0)) / 100.0
     with st.expander("🏦 Debt Structure", expanded=True):
-        default_tranches = s.get('debt_tranches', [
-            {"amount": 10_000_000, "annual_rate": 6.0, "interest_type": "Cash", "drawdown_start_month": 1, "drawdown_end_month": 24, "maturity_month": 120, "repayment_type": "Interest-Only", "amortization_period_years": 30},
-            {"amount": 10_000_000, "annual_rate": 7.5, "interest_type": "PIK", "drawdown_start_month": 1, "drawdown_end_month": 36, "maturity_month": 180, "repayment_type": "Interest-Only", "amortization_period_years": 30},
-        ])
-        num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, 
-                                       value=len(default_tranches), step=1)
+        default_tranches = s.get('debt_tranches', [ {"amount": 10_000_000, "annual_rate": 6.0, "interest_type": "Cash", "drawdown_start_month": 1, "drawdown_end_month": 24, "maturity_month": 120, "repayment_type": "Interest-Only", "amortization_period_years": 30}, {"amount": 10_000_000, "annual_rate": 7.5, "interest_type": "PIK", "drawdown_start_month": 1, "drawdown_end_month": 36, "maturity_month": 180, "repayment_type": "Interest-Only", "amortization_period_years": 30}, ])
+        num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=len(default_tranches), step=1)
         debt_tranches_data = []
         for i in range(num_tranches):
             defaults = default_tranches[i] if i < len(default_tranches) else default_tranches[0]
@@ -174,34 +208,23 @@ with st.sidebar:
             amortization_years = defaults.get("amortization_period_years", 30)
             if repayment_type == "Amortizing":
                 amortization_years = st.number_input(f"Amortization Period (Years)", value=amortization_years, step=1, key=f"d_amort_{i}")
-            
             tranche_data = { "name": f"Tranche {i+1}", "amount": amount, "annual_rate": rate, "interest_type": interest_type, "drawdown_start_month": draw_start, "drawdown_end_month": draw_end, "maturity_month": maturity, "repayment_type": repayment_type, "amortization_period_years": amortization_years }
             debt_tranches_data.append(tranche_data)
-
     with st.expander("🏛️ Treasury Management"):
         enable_treasury = st.toggle("Enable Treasury Management on Unused Equity", value=s.get('enable_treasury', False))
         treasury_yield = 0.0
         if enable_treasury:
-            treasury_yield = st.number_input("Short-term Investment Yield (annual, %)", value=s.get('treasury_yield_pct', 4.5), 
-                                           step=0.1, format="%.2f") / 100.0
-    
+            treasury_yield = st.number_input("Short-term Investment Yield (annual, %)", value=s.get('treasury_yield_pct', 4.5), step=0.1, format="%.2f") / 100.0
     with st.expander("🧾 Fees & Opex", expanded=True):
-        investment_period = st.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, 
-                                            value=s.get('investment_period', 5), step=1)
+        investment_period = st.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=s.get('investment_period', 5), step=1)
         mgmt_fee_basis_options = ["Equity Commitment", "Total Commitment (Equity + Debt)", "Assets Outstanding"]
-        mgmt_fee_basis = st.selectbox("Management Fee Basis", mgmt_fee_basis_options, 
-                                      index=mgmt_fee_basis_options.index(s.get('mgmt_fee_basis', "Equity Commitment")))
+        mgmt_fee_basis = st.selectbox("Management Fee Basis", mgmt_fee_basis_options, index=mgmt_fee_basis_options.index(s.get('mgmt_fee_basis', "Equity Commitment")))
         waive_mgmt_fee_on_gp = st.toggle("Waive mgmt fee on GP commitment", value=s.get('waive_mgmt_fee_on_gp', True))
-        mgmt_early = st.number_input(f"Mgmt Fee Yrs 1—{investment_period} (%)", value=s.get('mgmt_early_pct', 1.75), 
-                                     step=0.05, format="%.2f") / 100.0
-        mgmt_late  = st.number_input(f"Mgmt Fee Yrs {investment_period + 1}—{fund_duration_years} (%)", 
-                                     value=s.get('mgmt_late_pct', 1.25), step=0.05, format="%.2f") / 100.0
-        opex_annual = st.number_input("Operating Expenses (annual $)", value=s.get('opex_annual', 1_200_000.0), 
-                                      step=50_000.0, format="%.0f")
-
+        mgmt_early = st.number_input(f"Mgmt Fee Yrs 1—{investment_period} (%)", value=s.get('mgmt_early_pct', 1.75), step=0.05, format="%.2f") / 100.0
+        mgmt_late  = st.number_input(f"Mgmt Fee Yrs {investment_period + 1}—{fund_duration_years} (%)", value=s.get('mgmt_late_pct', 1.25), step=0.05, format="%.2f") / 100.0
+        opex_annual = st.number_input("Operating Expenses (annual $)", value=s.get('opex_annual', 1_200_000.0), step=50_000.0, format="%.0f")
     st.markdown("---")
     st.subheader("📈 Scenario Drivers")
-
     with st.expander(f"🛠️ Equity Deployment (during {investment_period}-Year Investment Period)"):
         eq_ramp_defaults = s.get('eq_ramp_by_year', [equity_commit * (y / investment_period) for y in range(1, investment_period)])
         eq_ramp = []
@@ -211,11 +234,9 @@ with st.sidebar:
                 eq_ramp.append(equity_commit)
             else:
                 default_val = eq_ramp_defaults[y-1] if y-1 < len(eq_ramp_defaults) else equity_commit * (y / investment_period)
-                eq_val = st.number_input(f"Equity by End of Y{y} ($)", min_value=min_val_for_year, max_value=equity_commit,
-                                         value=default_val, step=250_000.0, format="%.0f", key=f"eq_ramp_{y}")
+                eq_val = st.number_input(f"Equity by End of Y{y} ($)", min_value=min_val_for_year, max_value=equity_commit, value=default_val, step=250_000.0, format="%.0f", key=f"eq_ramp_{y}")
                 eq_ramp.append(eq_val)
                 min_val_for_year = eq_val
-
     with st.expander("🌊 Waterfall Structure"):
         roc_first_enabled = st.toggle("Enable Return of Capital (ROC) First", value=s.get('roc_first_enabled', True))
         tier_defaults_data = s.get('waterfall_tiers', [ {"until_annual_irr": 8.0, "lp_split": 1.00}, {"until_annual_irr": 12.0, "lp_split": 0.72}, {"until_annual_irr": 15.0, "lp_split": 0.63}, {"until_annual_irr": 20.0, "lp_split": 0.60}, {"until_annual_irr": None, "lp_split": 0.54} ])
@@ -229,14 +250,12 @@ with st.sidebar:
             gp_split_pct = 100.0 - lp_split_pct
             st.text_input("GP Split (%)", value=f"{gp_split_pct:.2f}", key=f"gp_{i}", disabled=True)
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
-
     st.subheader("🏁 Exit Scenario")
     equity_multiple = st.number_input("Development Equity Multiple", value=s.get('equity_multiple', 2.0), step=0.1, format="%.2f")
     default_exit_years = s.get('exit_years', (max(1, fund_duration_years - 1), fund_duration_years))
     exit_year_range = st.slider("Select Exit Years", min_value=1, max_value=fund_duration_years, value=default_exit_years)
     exit_years = list(range(exit_year_range[0], exit_year_range[1] + 1))
     st.caption(f"Exit proceeds will be realized across years: {exit_years}")
-
     current_scenario_dict = {
         'fund_duration_years': fund_duration_years, 'equity_commitment': equity_commit, 'lp_commitment': lp_commit, 'gp_commitment': gp_commit,
         'asset_yield_pct': asset_yield * 100, 'asset_income_type': asset_income_type, 'equity_for_lending_pct': int(equity_for_lending_pct * 100),
@@ -250,7 +269,6 @@ with st.sidebar:
     st.download_button( label="💾 Save Current Scenario", data=json.dumps(current_scenario_dict, indent=2), file_name="fund_scenario.json", mime="application/json" )
 
 debt_tranches = [DebtTrancheConfig(**{**data, 'annual_rate': data['annual_rate'] / 100.0}) for data in debt_tranches_data]
-
 cfg = FundConfig(
     fund_duration_years=fund_duration_years, investment_period_years=investment_period,
     equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
@@ -269,7 +287,7 @@ st.subheader("Model Outcomes")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Gross Asset Value at Exit", f"${summary.get('Gross_Exit_Proceeds', 0):,.0f}")
-    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):.2f}x")
+    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):,.2f}x")
 with col2:
     st.metric("LP MOIC (net)", format_metric(summary.get("LP_MOIC"), suffix="x"))
     st.metric("LP IRR (annual)", format_metric(summary.get("LP_IRR_annual", 0) * 100, suffix="%"))
@@ -278,7 +296,7 @@ with col3:
     st.metric("GP IRR (annual)", format_metric(summary.get("GP_IRR_annual", 0) * 100, suffix="%"))
 with col4:
     st.metric("Net Proceeds to Equity", f'${summary.get("Net_Proceeds_to_Equity", 0):,.0f}')
-    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):.2f}x")
+    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):,.2f}x")
 
 st.markdown("---")
 st.subheader("Fund Cash Flows")
@@ -304,7 +322,7 @@ with tab2:
         st.dataframe(df_annual_summary[ordered_cols].style.format("{:,.0f}"))
 
 if not df.empty and not display_df_monthly.empty and not df_annual_summary.empty:
-    excel_file = to_excel(display_df_monthly, df_annual_summary, summary, cfg)
+    excel_file = to_excel(display_df_monthly, df_annual_summary, summary, cfg, wcfg)
     st.download_button( label="📥 Download Model to Excel", data=excel_file, file_name="fund_model_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" )
 
 st.markdown("---")
@@ -324,23 +342,19 @@ if not df.empty:
 
 with st.expander("View Key Model Assumptions for this Scenario"):
     st.write(f"**Fund Timeline:** A **{fund_duration_years}-year** fund with a **{investment_period}-year** investment period.")
-    
     st.write("**Asset Income:**")
     income_base_desc = "the outstanding debt balance"
     if equity_for_lending_pct > 0:
         income_base_desc += f" plus {equity_for_lending_pct*100:.0f}% of the outstanding equity balance"
     interest_type_desc = "paid in CASH monthly" if asset_income_type == "Cash" else "accrued as PIK"
     st.write(f"• The fund earns **{asset_yield*100:.2f}%** annually on {income_base_desc}, {interest_type_desc}.")
-
     if treasury_yield > 0:
         st.write(f"• **Treasury Income** is earned at **{treasury_yield*100:.2f}%** on uncalled equity and is used to offset fund expenses.")
-
     st.write("**Debt Structure:**")
     if not debt_tranches:
         st.write("• No debt is being used in this scenario.")
     for i, tranche in enumerate(debt_tranches):
         st.write(f"• **Tranche {i+1}**: ${tranche.amount:,.0f} at {tranche.annual_rate*100:.2f}% interest ({tranche.interest_type}), maturing in month {tranche.maturity_month}.")
-
     st.write("**Fees & Opex:**")
     st.write(f"• **Management Fee Basis**: Charged on *{mgmt_fee_basis}*.")
     if waive_mgmt_fee_on_gp and mgmt_fee_basis != "Assets Outstanding":
@@ -349,13 +363,11 @@ with st.expander("View Key Model Assumptions for this Scenario"):
         st.write("• The fee is **not** waived on the GP's committed capital.")
     st.write(f"• **Fee Rate**: {mgmt_early*100:.2f}% for years 1-{investment_period}, then {mgmt_late*100:.2f}% for years {investment_period+1}-{fund_duration_years}.")
     st.write(f"• **Annual Operating Expenses**: ${opex_annual:,.0f}.")
-    
     st.write("**Waterfall Structure:**")
     if roc_first_enabled:
         st.write("• **Return of Capital First** is **ENABLED**.")
     else:
         st.write("• **Return of Capital First** is **DISABLED** (Pure IRR waterfall).")
-    
     for i, tier in enumerate(tiers):
         if tier.until_annual_irr is not None:
             st.write(f"• **Tier {i+1}**: Until LP IRR reaches {tier.until_annual_irr*100:.1f}%, profits are split {tier.lp_split*100:.0f}%/{tier.gp_split*100:.0f}% to LP/GP.")
