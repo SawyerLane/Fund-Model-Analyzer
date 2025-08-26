@@ -162,7 +162,7 @@ with st.spinner("Running scenario..."):
         cfg, wcfg, 
         exit_valuation_method=exit_valuation_method,
         equity_multiple=equity_multiple,
-        asset_multiple=asset_multiple, # Pass asset_multiple even if 0
+        asset_multiple=asset_multiple,
         exit_cap_rate=exit_cap_rate,
         exit_years=exit_years
     )
