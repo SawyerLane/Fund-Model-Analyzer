@@ -3,4 +3,5 @@ numpy
 streamlit
 altair
 scipy
-openpyxl
+XlsxWriter
+

@@ -16,12 +16,95 @@ def format_metric(value, format_str=",.2f", suffix=""):
         return f"{value:{format_str}}{suffix}"
     return "N/A"
 
-def to_excel(df_monthly, df_annual):
-    """Exports dataframes to an in-memory Excel file."""
+def to_excel(df_monthly, df_annual, summary_data: dict, fund_config: FundConfig):
+    """Exports dataframes to an in-memory, formatted Excel file with a summary sheet and charts."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_monthly.to_excel(writer, index=True, sheet_name='Monthly_Cash_Flows')
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        
+        # --- Create Formats ---
+        header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1})
+        percent_format = workbook.add_format({'num_format': '0.00%'})
+        money_format = workbook.add_format({'num_format': '$#,##0'})
+        multiple_format = workbook.add_format({'num_format': '0.00"x"'})
+        
+        # --- 1. Summary & Assumptions Sheet ---
+        summary_sheet = workbook.add_worksheet('Summary_&_Assumptions')
+        
+        # Key Metrics
+        metrics = {
+            "LP IRR (annual)": summary_data.get("LP_IRR_annual"),
+            "LP MOIC (net)": summary_data.get("LP_MOIC"),
+            "GP IRR (annual)": summary_data.get("GP_IRR_annual"),
+            "GP MOIC": summary_data.get("GP_MOIC"),
+            "Net Equity Multiple": summary_data.get("Net_Equity_Multiple"),
+            "Gross Asset Value at Exit": summary_data.get("Gross_Exit_Proceeds"),
+        }
+        metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value'])
+        summary_sheet.write('A1', 'Key Metrics', header_format)
+        metrics_df.to_excel(writer, sheet_name='Summary_&_Assumptions', startrow=1, index=False)
+        
+        # Apply formatting to metrics
+        summary_sheet.set_column('A:A', 30)
+        summary_sheet.set_column('B:B', 20)
+        summary_sheet.conditional_format('B3:B3', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': percent_format})
+        summary_sheet.conditional_format('B4:B4', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
+        summary_sheet.conditional_format('B5:B5', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': percent_format})
+        summary_sheet.conditional_format('B6:B6', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
+        summary_sheet.conditional_format('B7:B7', {'type': 'cell', 'criteria': '>=', 'value': -1, 'format': multiple_format})
+        summary_sheet.conditional_format('B8:B8', {'type': 'cell', 'criteria': '>=', 'value': 0, 'format': money_format})
+
+        # Key Assumptions
+        assumptions = asdict(fund_config)
+        # Clean up assumptions for display
+        assumptions.pop('debt_tranches', None)
+        assumptions.pop('tiers', None)
+        assumptions_df = pd.DataFrame(list(assumptions.items()), columns=['Assumption', 'Value'])
+        summary_sheet.write('D1', 'Key Fund Assumptions', header_format)
+        assumptions_df.to_excel(writer, sheet_name='Summary_&_Assumptions', startrow=1, startcol=3, index=False)
+        summary_sheet.set_column('D:D', 30)
+        summary_sheet.set_column('E:E', 20)
+
+        # --- 2. Data Sheets with Formatting ---
         df_annual.to_excel(writer, index=True, sheet_name='Annual_Summary')
+        annual_sheet = writer.sheets['Annual_Summary']
+        for col_num, value in enumerate(df_annual.columns.values):
+            annual_sheet.write(0, col_num + 1, value, header_format)
+        annual_sheet.freeze_panes(1, 0)
+        
+        df_monthly.to_excel(writer, index=True, sheet_name='Monthly_Cash_Flows')
+        monthly_sheet = writer.sheets['Monthly_Cash_Flows']
+        for col_num, value in enumerate(df_monthly.columns.values):
+            monthly_sheet.write(0, col_num + 1, value, header_format)
+        monthly_sheet.freeze_panes(1, 1)
+
+        # --- 3. Charts Sheet ---
+        charts_sheet = workbook.add_worksheet('Charts')
+        chart = workbook.add_chart({'type': 'line'})
+        num_years = len(df_annual)
+        
+        # Add series to the chart: Outstanding Balances
+        chart.add_series({
+            'name':       '=Annual_Summary!$F$1',
+            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
+            'values':     '=Annual_Summary!$F$2:$F${}'.format(num_years + 1),
+        })
+        chart.add_series({
+            'name':       '=Annual_Summary!$D$1',
+            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
+            'values':     '=Annual_Summary!$D$2:$D${}'.format(num_years + 1),
+        })
+        chart.add_series({
+            'name':       '=Annual_Summary!$E$1',
+            'categories': '=Annual_Summary!$A$2:$A${}'.format(num_years + 1),
+            'values':     '=Annual_Summary!$E$2:$E${}'.format(num_years + 1),
+        })
+        chart.set_title({'name': 'Outstanding Balances Over Time'})
+        chart.set_x_axis({'name': 'Year'})
+        chart.set_y_axis({'name': 'Amount ($)', 'num_format': '$#,##0'})
+        chart.set_size({'width': 720, 'height': 480})
+        charts_sheet.insert_chart('B2', chart)
+
     processed_data = output.getvalue()
     return processed_data
 
@@ -32,14 +115,12 @@ st.set_page_config(page_title="Fund Model", layout="wide")
 
 st.title("Fund Model Scenario Analysis")
 
-# --- SESSION STATE INITIALIZATION FOR SCENARIO LOADING ---
 if 'scenario' not in st.session_state:
     st.session_state.scenario = {}
 
 with st.sidebar:
     st.header("📂 Scenario Management")
 
-    # --- SCENARIO UPLOADER ---
     uploaded_file = st.file_uploader("Load Scenario from JSON", type="json")
     if uploaded_file is not None:
         try:
@@ -48,7 +129,6 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Error loading scenario file: {e}")
 
-    # Use loaded scenario values, otherwise use defaults
     s = st.session_state.scenario
 
     st.header("🔑 Key Inputs")
@@ -95,11 +175,7 @@ with st.sidebar:
             if repayment_type == "Amortizing":
                 amortization_years = st.number_input(f"Amortization Period (Years)", value=amortization_years, step=1, key=f"d_amort_{i}")
             
-            tranche_data = {
-                "name": f"Tranche {i+1}", "amount": amount, "annual_rate": rate, "interest_type": interest_type,
-                "drawdown_start_month": draw_start, "drawdown_end_month": draw_end, "maturity_month": maturity,
-                "repayment_type": repayment_type, "amortization_period_years": amortization_years
-            }
+            tranche_data = { "name": f"Tranche {i+1}", "amount": amount, "annual_rate": rate, "interest_type": interest_type, "drawdown_start_month": draw_start, "drawdown_end_month": draw_end, "maturity_month": maturity, "repayment_type": repayment_type, "amortization_period_years": amortization_years }
             debt_tranches_data.append(tranche_data)
 
     with st.expander("🏛️ Treasury Management"):
@@ -142,16 +218,12 @@ with st.sidebar:
 
     with st.expander("🌊 Waterfall Structure"):
         roc_first_enabled = st.toggle("Enable Return of Capital (ROC) First", value=s.get('roc_first_enabled', True))
-        
-        tier_defaults_data = s.get('waterfall_tiers', [
-            {"until_annual_irr": 8.0, "lp_split": 1.00}, {"until_annual_irr": 12.0, "lp_split": 0.72},
-            {"until_annual_irr": 15.0, "lp_split": 0.63}, {"until_annual_irr": 20.0, "lp_split": 0.60},
-            {"until_annual_irr": None, "lp_split": 0.54}
-        ])
+        tier_defaults_data = s.get('waterfall_tiers', [ {"until_annual_irr": 8.0, "lp_split": 1.00}, {"until_annual_irr": 12.0, "lp_split": 0.72}, {"until_annual_irr": 15.0, "lp_split": 0.63}, {"until_annual_irr": 20.0, "lp_split": 0.60}, {"until_annual_irr": None, "lp_split": 0.54} ])
         tiers = []
         for i, tier_data in enumerate(tier_defaults_data, start=1):
             st.caption(f"Tier {i}")
-            cap_val = st.text_input(f"LP IRR Hurdle Until (%)", value="" if tier_data["until_annual_irr"] is None else f"{tier_data['until_annual_irr']:.2f}", key=f"cap_{i}")
+            cap_val_str = "" if tier_data["until_annual_irr"] is None else f"{tier_data['until_annual_irr']:.2f}"
+            cap_val = st.text_input(f"LP IRR Hurdle Until (%)", value=cap_val_str, key=f"cap_{i}")
             cap_float = None if cap_val.strip()=="" else float(cap_val)/100.0
             lp_split_pct = st.number_input(f"LP Split (%)", value=float(tier_data["lp_split"]*100), min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key=f"lp_{i}")
             gp_split_pct = 100.0 - lp_split_pct
@@ -160,7 +232,6 @@ with st.sidebar:
 
     st.subheader("🏁 Exit Scenario")
     equity_multiple = st.number_input("Development Equity Multiple", value=s.get('equity_multiple', 2.0), step=0.1, format="%.2f")
-    
     default_exit_years = s.get('exit_years', (max(1, fund_duration_years - 1), fund_duration_years))
     exit_year_range = st.slider("Select Exit Years", min_value=1, max_value=fund_duration_years, value=default_exit_years)
     exit_years = list(range(exit_year_range[0], exit_year_range[1] + 1))
@@ -176,12 +247,7 @@ with st.sidebar:
         'waterfall_tiers': [{'until_annual_irr': t.until_annual_irr * 100 if t.until_annual_irr else None, 'lp_split': t.lp_split} for t in tiers],
         'equity_multiple': equity_multiple, 'exit_years': exit_year_range
     }
-    st.download_button(
-        label="💾 Save Current Scenario",
-        data=json.dumps(current_scenario_dict, indent=2),
-        file_name="fund_scenario.json",
-        mime="application/json"
-    )
+    st.download_button( label="💾 Save Current Scenario", data=json.dumps(current_scenario_dict, indent=2), file_name="fund_scenario.json", mime="application/json" )
 
 debt_tranches = [DebtTrancheConfig(**{**data, 'annual_rate': data['annual_rate'] / 100.0}) for data in debt_tranches_data]
 
@@ -203,7 +269,7 @@ st.subheader("Model Outcomes")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Gross Asset Value at Exit", f"${summary.get('Gross_Exit_Proceeds', 0):,.0f}")
-    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):,.2f}x")
+    st.metric("Gross MOIC (on Total Capital)", f"{summary.get('Gross_MOIC_Total_Capital', 0):.2f}x")
 with col2:
     st.metric("LP MOIC (net)", format_metric(summary.get("LP_MOIC"), suffix="x"))
     st.metric("LP IRR (annual)", format_metric(summary.get("LP_IRR_annual", 0) * 100, suffix="%"))
@@ -212,7 +278,7 @@ with col3:
     st.metric("GP IRR (annual)", format_metric(summary.get("GP_IRR_annual", 0) * 100, suffix="%"))
 with col4:
     st.metric("Net Proceeds to Equity", f'${summary.get("Net_Proceeds_to_Equity", 0):,.0f}')
-    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):,.2f}x")
+    st.metric("Net Equity Multiple", f"{summary.get('Net_Equity_Multiple', 0):.2f}x")
 
 st.markdown("---")
 st.subheader("Fund Cash Flows")
@@ -237,14 +303,9 @@ with tab2:
         ordered_cols = [col for col in show_cols if col in df_annual_summary.columns]
         st.dataframe(df_annual_summary[ordered_cols].style.format("{:,.0f}"))
 
-if not df.empty:
-    excel_file = to_excel(display_df_monthly, df_annual_summary)
-    st.download_button(
-        label="📥 Download Model to Excel",
-        data=excel_file,
-        file_name="fund_model_output.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+if not df.empty and not display_df_monthly.empty and not df_annual_summary.empty:
+    excel_file = to_excel(display_df_monthly, df_annual_summary, summary, cfg)
+    st.download_button( label="📥 Download Model to Excel", data=excel_file, file_name="fund_model_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" )
 
 st.markdown("---")
 st.subheader("Charts")
