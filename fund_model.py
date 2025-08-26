@@ -4,7 +4,6 @@ from scipy.optimize import brentq
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Tuple, Dict
 
-# Import from config is now cleaner
 from config import FundConfig, WaterfallConfig, WaterfallTier
 
 def monthly_rate_from_annual_eff(annual_eff: float) -> float:
@@ -142,6 +141,11 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     total_interest_earned = np.zeros(months)
     total_interest_incurred = np.zeros(months)
 
+    # --- NEW: Treasury Management Logic ---
+    uncalled_equity = cfg.equity_commitment - eq_out_path
+    r_treasury_m_simple = monthly_rate_from_annual_simple(cfg.treasury_yield_annual)
+    treasury_income = uncalled_equity * r_treasury_m_simple
+
     for i in range(months):
         month_num = i + 1
         current_debt_outstanding = sum(t['outstanding'][i] for t in tranche_details)
@@ -165,7 +169,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
             elif i + 1 < months:
                 t['outstanding'][i+1] += interest
 
-            # Amortizing logic now triggers after the full tranche is drawn down.
             if t['repayment_type'] == 'Amortizing' and month_num > t['drawdown_end_month'] and t['outstanding'][i] > 0:
                 principal_paid = max(0, t['monthly_payment'] - interest)
                 principal_paid = min(principal_paid, t['outstanding'][i])
@@ -188,25 +191,21 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         rate = cfg.mgmt_fee_annual_early if month_num <= investment_period_months else cfg.mgmt_fee_annual_late
         mgmt_fees[i] = max(0, fee_base) * rate / 12.0
 
-    # Maturity Repayments (Bullet payments)
     for t in tranche_details:
         maturity_idx = t['maturity'] - 1
         if 0 <= maturity_idx < months:
-            # The repayment is the outstanding balance in the maturity month
             repayment = t['outstanding'][maturity_idx]
             debt_principal_repay[maturity_idx] += repayment
-            # After repayment, the outstanding balance for this tranche goes to zero
             if maturity_idx + 1 < months:
                 t['outstanding'][maturity_idx + 1:] = 0
     
     final_month_idx = months - 1
     if final_month_idx >= 0:
-        # Repay any remaining debt in the final month of the fund's life
-        # This handles cases where maturity is beyond the fund's duration
         remaining_debt_at_end = sum(t['outstanding'][final_month_idx] for t in tranche_details)
         debt_principal_repay[final_month_idx] += remaining_debt_at_end
 
-    oper_cash_flow = asset_cash_income - mgmt_fees - opex - debt_interest_cash
+    # --- UPDATED: Treasury income now offsets expenses ---
+    oper_cash_flow = asset_cash_income + treasury_income - mgmt_fees - opex - debt_interest_cash
     shortfall = np.minimum(oper_cash_flow, 0)
     
     lp_ratio = cfg.lp_commitment / max(cfg.equity_commitment, 1e-9)
@@ -218,12 +217,12 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     lp_total_contrib = eq_contrib_deploy * lp_ratio + lp_oper_contrib
     gp_total_contrib = eq_contrib_deploy * gp_ratio + gp_oper_contrib
 
-    # This column is now empty and will be populated by the exit scenario
     equity_principal_repay = np.zeros(months)
     
     df = pd.DataFrame({
         "Assets_Outstanding": mod_assets_path, "Equity_Outstanding": eq_out_path,
         "Debt_Outstanding": final_debt_out_path, "Asset_Interest_Income": asset_cash_income,
+        "Treasury_Income": treasury_income, # --- NEW: Added for reporting
         "Mgmt_Fees": mgmt_fees, "Opex": opex, "Debt_Interest": debt_interest_cash,
         "Debt_Principal_Repay": debt_principal_repay, "Equity_Principal_Repay": equity_principal_repay,
         "Equity_Contribution": eq_contrib_deploy, "LP_Contribution": lp_total_contrib,
@@ -234,7 +233,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         "Unused_Capital": unused_capital
     }, index=mi)
 
-    # This now correctly reflects cash available for distribution from operations and debt repayments
     df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Debt_Principal_Repay"]
     return df
 
@@ -338,27 +336,19 @@ def run_fund_scenario(
     """
     Runs the full fund scenario, including operational cash flows and a final exit event.
     """
-    # 1. Build the base operational cash flow, including scheduled debt repayments.
     df = build_cash_flows(cfg)
     
-    # 2. Determine the value of the exit event.
-    # The debt to be repaid at exit is the outstanding balance just before the first exit year.
     first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(df) - 1
     debt_repayment_at_exit = df.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in df.index else df['Debt_Outstanding'].iloc[-1]
     
-    # Calculate exit proceeds based on the development equity multiple.
     equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
     equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
     development_returns = equity_for_development * equity_multiple
     net_proceeds_to_equity = equity_for_lending + development_returns
     gross_exit_proceeds = net_proceeds_to_equity + debt_repayment_at_exit
     
-    # 3. Add the exit event cash flows to the DataFrame.
-    # These are layered on top of the existing operational cash flows.
     if exit_years:
-        # The debt principal repayment from the exit is distributed across exit years.
         debt_repay_from_exit_per_year = debt_repayment_at_exit / len(exit_years)
-        # The net equity proceeds from the exit are also distributed.
         equity_dist_from_exit_per_year = net_proceeds_to_equity / len(exit_years)
         
         for year in exit_years:
@@ -366,14 +356,11 @@ def run_fund_scenario(
             months_in_year = [m for m in range(start_month, end_month + 1) if m in df.index]
             if not months_in_year: continue
             
-            # Add exit-related cash flows to the existing values.
             df.loc[months_in_year, "Debt_Principal_Repay"] += debt_repay_from_exit_per_year / len(months_in_year)
             df.loc[months_in_year, "Equity_Distributable_BeforeTopoff"] += equity_dist_from_exit_per_year / len(months_in_year)
 
-    # 4. Run the waterfall on the combined cash flows.
     out = allocate_waterfall_monthly(df, wcfg)
 
-    # 5. Zero out balances after the final exit month for cleaner reporting.
     if exit_years:
         last_exit_month = max(exit_years) * 12
         last_month_of_fund = cfg.fund_duration_years * 12
@@ -393,3 +380,4 @@ def run_fund_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+

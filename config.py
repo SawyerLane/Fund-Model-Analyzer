@@ -48,6 +48,9 @@ class FundConfig:
     asset_income_type: Literal["Cash", "PIK"] = "PIK"
     equity_for_lending_pct: float = 0.0
 
+    # --- NEW: Field for Treasury Management ---
+    treasury_yield_annual: float = 0.0
+
     mgmt_fee_basis: Literal["Equity Commitment", "Total Commitment (Equity + Debt)", "Assets Outstanding"] = "Equity Commitment"
     waive_mgmt_fee_on_gp: bool = True
     mgmt_fee_annual_early: float = 0.0175
@@ -55,3 +58,4 @@ class FundConfig:
     opex_annual_fixed: float = 1_200_000.0
     
     eq_ramp_by_year: List[float] = field(default_factory=lambda: [6e6, 12e6, 18e6, 24e6, 30e6])
+

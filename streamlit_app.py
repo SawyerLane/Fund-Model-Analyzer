@@ -5,9 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Tuple, Dict
 import altair as alt
 
-# Updated imports to remove ScenarioConfig
 from config import FundConfig, WaterfallConfig, WaterfallTier, DebtTrancheConfig
-# Renamed the main function import
 from fund_model import run_fund_scenario
 
 def format_metric(value, format_str=",.2f", suffix=""):
@@ -34,7 +32,6 @@ with st.sidebar:
 
     st.markdown("### 💰 Fund Assumptions")
     
-    # --- UI FIX: Added emojis to expander labels ---
     with st.expander("💵 Asset Income & Lending", expanded=True):
         asset_yield = st.number_input("Borrower Yield (annual, %)", value=9.0, step=0.25, format="%.2f", help="The annualized interest rate the fund earns on its income-producing assets.")/100.0
         asset_income_type = st.selectbox(
@@ -46,7 +43,6 @@ with st.sidebar:
             help="Percentage of deployed equity that earns the Asset Yield alongside debt."
         ) / 100.0
 
-    # --- UI FIX: Added emojis to expander labels ---
     with st.expander("🏦 Debt Structure", expanded=True):
         num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=2, step=1, help="The number of separate debt facilities the fund will use.")
         debt_tranches = []
@@ -63,7 +59,6 @@ with st.sidebar:
             draw_start = st.number_input(f"Drawdown Start Month", value=defaults["draw_s"], step=1, key=f"d_draw_s_{i}", help="The month this debt facility begins to be drawn.")
             draw_end = st.number_input(f"Drawdown End Month", value=defaults["draw_e"], step=1, key=f"d_draw_e_{i}", help="The month this debt facility is fully drawn.")
             maturity = st.number_input(f"Maturity Month", value=defaults["mat"], step=12, key=f"d_mat_{i}", help="The month the principal of this tranche is due to be repaid.")
-            
             repayment_type = st.selectbox(f"Repayment Type", ["Interest-Only", "Amortizing"], key=f"d_repay_type_{i}", help="Interest-Only: Full principal is paid at maturity. Amortizing: Regular principal payments are made over a set period.")
             amortization_years = 0
             if repayment_type == "Amortizing":
@@ -75,8 +70,15 @@ with st.sidebar:
                 repayment_type=repayment_type, amortization_period_years=amortization_years
             )
             debt_tranches.append(tranche)
+
+    # --- NEW: UI for Treasury Management ---
+    with st.expander("🏛️ Treasury Management"):
+        enable_treasury = st.toggle("Enable Treasury Management on Unused Equity", value=False)
+        treasury_yield = 0.0
+        if enable_treasury:
+            treasury_yield = st.number_input("Short-term Investment Yield (annual, %)", value=4.5, step=0.1, format="%.2f",
+                                           help="Annual yield earned on uncalled equity commitment, used to offset fund expenses.") / 100.0
     
-    # --- UI FIX: Added emojis to expander labels ---
     with st.expander("🧾 Fees & Opex", expanded=True):
         investment_period = st.number_input(
             "Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5, step=1,
@@ -93,7 +95,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📈 Scenario Drivers")
 
-    # --- UI FIX: Added emojis to expander labels ---
     with st.expander(f"🛠️ Equity Deployment (during {investment_period}-Year Investment Period)"):
         eq_ramp = []
         min_val_for_year = 0.0
@@ -111,7 +112,6 @@ with st.sidebar:
                 eq_ramp.append(eq_val)
                 min_val_for_year = eq_val
 
-    # --- UI FIX: Added emojis to expander labels ---
     with st.expander("🌊 Waterfall Structure"):
         roc_first_enabled = st.toggle("Enable Return of Capital (ROC) First", value=True, help="If ON, all capital is returned to partners before profit is split. If OFF, profit is split based purely on IRR hurdles.")
         tiers = []
@@ -144,7 +144,9 @@ cfg = FundConfig(
     fund_duration_years=fund_duration_years, investment_period_years=investment_period,
     equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
     debt_tranches=debt_tranches, asset_yield_annual=asset_yield, asset_income_type=asset_income_type,
-    equity_for_lending_pct=equity_for_lending_pct, mgmt_fee_basis=mgmt_fee_basis,
+    equity_for_lending_pct=equity_for_lending_pct, 
+    treasury_yield_annual=treasury_yield, # --- NEW: Pass treasury yield to config ---
+    mgmt_fee_basis=mgmt_fee_basis,
     waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp, mgmt_fee_annual_early=mgmt_early,
     mgmt_fee_annual_late=mgmt_late, opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp,
 )
@@ -179,10 +181,11 @@ tab1, tab2 = st.tabs(["Monthly View", "Annual Summary"])
 
 with tab1:
     st.caption("Detailed monthly cash flows for the life of the fund.")
+    # --- UPDATED: Added Treasury_Income to display columns ---
     show_cols = [
         "Assets_Outstanding", "Unused_Capital", "Equity_Outstanding", "Debt_Outstanding", 
-        "Asset_Interest_Income", "Mgmt_Fees", "Opex", "Debt_Interest", "Operating_Cash_Flow", 
-        "LP_Contribution", "GP_Contribution", "Debt_Principal_Repay", 
+        "Asset_Interest_Income", "Treasury_Income", "Mgmt_Fees", "Opex", "Debt_Interest", 
+        "Operating_Cash_Flow", "LP_Contribution", "GP_Contribution", "Debt_Principal_Repay", 
         "LP_Distribution", "GP_Distribution", "Tier_Used",
     ]
     available_cols = [col for col in show_cols if col in df.columns]
@@ -197,11 +200,11 @@ with tab2:
     annual_df = df.copy()
     annual_df['year'] = (annual_df.index - 1) // 12 + 1
     agg_rules = {
-        'Asset_Interest_Income': 'sum', 'Mgmt_Fees': 'sum', 'Opex': 'sum',
-        'Debt_Interest': 'sum', 'Operating_Cash_Flow': 'sum', 'LP_Contribution': 'sum',
-        'GP_Contribution': 'sum', 'Debt_Principal_Repay': 'sum', 'LP_Distribution': 'sum',
-        'GP_Distribution': 'sum', 'Assets_Outstanding': 'last', 'Unused_Capital': 'last',
-        'Equity_Outstanding': 'last', 'Debt_Outstanding': 'last',
+        'Asset_Interest_Income': 'sum', 'Treasury_Income': 'sum', 'Mgmt_Fees': 'sum', 
+        'Opex': 'sum', 'Debt_Interest': 'sum', 'Operating_Cash_Flow': 'sum', 
+        'LP_Contribution': 'sum', 'GP_Contribution': 'sum', 'Debt_Principal_Repay': 'sum', 
+        'LP_Distribution': 'sum', 'GP_Distribution': 'sum', 'Assets_Outstanding': 'last', 
+        'Unused_Capital': 'last', 'Equity_Outstanding': 'last', 'Debt_Outstanding': 'last',
     }
     final_agg_rules = {k: v for k, v in agg_rules.items() if k in annual_df.columns}
     if not annual_df.empty:
@@ -270,6 +273,9 @@ with st.expander("View Key Model Assumptions for this Scenario"):
         income_base_desc += f" plus {equity_for_lending_pct*100:.0f}% of the outstanding equity balance"
     interest_type_desc = "paid in CASH monthly" if asset_income_type == "Cash" else "accrued as PIK"
     st.write(f"• The fund earns **{asset_yield*100:.2f}%** annually on {income_base_desc}, {interest_type_desc}.")
+
+    if treasury_yield > 0:
+        st.write(f"• **Treasury Income** is earned at **{treasury_yield*100:.2f}%** on uncalled equity and is used to offset fund expenses.")
 
     st.write("**Debt Structure:**")
     if not debt_tranches:
