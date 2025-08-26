@@ -5,8 +5,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Tuple, Dict
 import altair as alt
 
-from config import FundConfig, WaterfallConfig, ScenarioConfig, WaterfallTier, DebtTrancheConfig
-from fund_model import apply_exit_scenario
+# Updated imports to remove ScenarioConfig
+from config import FundConfig, WaterfallConfig, WaterfallTier, DebtTrancheConfig
+# Renamed the main function import
+from fund_model import run_fund_scenario
 
 def format_metric(value, format_str=",.2f", suffix=""):
     """Formats a number for display in st.metric, handling non-finite values."""
@@ -35,7 +37,7 @@ with st.sidebar:
     with st.expander("Asset Income & Lending", expanded=True):
         asset_yield = st.number_input("Borrower Yield (annual, %)", value=9.0, step=0.25, format="%.2f", help="The annualized interest rate the fund earns on its income-producing assets.")/100.0
         asset_income_type = st.selectbox(
-            "Borrower Interest Type", options=["PIK (Payment-in-Kind)", "Cash"], index=0, 
+            "Borrower Interest Type", options=["PIK", "Cash"], index=0, 
             help="PIK: Interest is accrued to the asset balance. Cash: Interest is paid in cash monthly."
         )
         equity_for_lending_pct = st.slider(
@@ -59,15 +61,18 @@ with st.sidebar:
             draw_start = st.number_input(f"Drawdown Start Month", value=defaults["draw_s"], step=1, key=f"d_draw_s_{i}", help="The month this debt facility begins to be drawn.")
             draw_end = st.number_input(f"Drawdown End Month", value=defaults["draw_e"], step=1, key=f"d_draw_e_{i}", help="The month this debt facility is fully drawn.")
             maturity = st.number_input(f"Maturity Month", value=defaults["mat"], step=12, key=f"d_mat_{i}", help="The month the principal of this tranche is due to be repaid.")
-            repayment_type = st.selectbox(f"Repayment Type", ["Interest-Only (Bullet)", "Amortizing (P&I)"], key=f"d_repay_type_{i}", help="Interest-Only: Full principal is paid at maturity. Amortizing: Regular principal payments are made over a set period.")
+            
+            # --- AMORTIZING LOGIC CLEANUP ---
+            # Simplified the selectbox options and removed the .split() logic
+            repayment_type = st.selectbox(f"Repayment Type", ["Interest-Only", "Amortizing"], key=f"d_repay_type_{i}", help="Interest-Only: Full principal is paid at maturity. Amortizing: Regular principal payments are made over a set period.")
             amortization_years = 0
-            if "Amortizing" in repayment_type:
+            if repayment_type == "Amortizing":
                 amortization_years = st.number_input(f"Amortization Period (Years)", value=defaults["amort"], step=1, key=f"d_amort_{i}", help="The period over which principal is repaid. If longer than maturity, this creates a balloon payment.")
 
             tranche = DebtTrancheConfig(
                 name=f"Tranche {i+1}", amount=amount, annual_rate=rate, interest_type=interest_type,
                 drawdown_start_month=draw_start, drawdown_end_month=draw_end, maturity_month=maturity,
-                repayment_type=repayment_type.split(" ")[0], amortization_period_years=amortization_years
+                repayment_type=repayment_type, amortization_period_years=amortization_years
             )
             debt_tranches.append(tranche)
     
@@ -118,25 +123,8 @@ with st.sidebar:
             tiers.append(WaterfallTier(until_annual_irr=cap_float, lp_split=lp_split_pct/100.0, gp_split=gp_split_pct/100.0))
 
     st.subheader("Exit Scenario")
-    exit_valuation_method = st.selectbox(
-        "Exit Valuation Method", 
-        ["Exit at Book Value", "Development Equity Multiple", "Capitalization Rate (Cap Rate)"],
-        index=0,
-        help="Choose how the fund's exit value is determined. 'Book Value' is an organic return from operations. 'Development Equity Multiple' applies a multiple only to the equity used for development projects."
-    )
-    
-    equity_multiple = 0
-    asset_multiple = 0
-    exit_cap_rate = 0
-    if exit_valuation_method == "Development Equity Multiple":
-        equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
-                                         help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
-    elif exit_valuation_method == "Gross Asset Multiple":
-        asset_multiple = st.number_input("Gross Asset Multiple at Exit", value=1.5, step=0.1, format="%.2f", 
-                                         help="The multiple on total deployed capital (Equity + Debt) used to determine the gross asset value at exit.")
-    elif exit_valuation_method == "Capitalization Rate (Cap Rate)":
-        exit_cap_rate = st.number_input("Exit Cap Rate (%)", value=6.0, step=0.25, format="%.2f",
-                                        help="The capitalization rate applied to the fund's net operating income (NOI) to determine the exit value.") / 100.0
+    equity_multiple = st.number_input("Development Equity Multiple", value=2.0, step=0.1, format="%.2f", 
+                                     help="The multiple applied *only* to the portion of equity used for development (i.e., not used for lending).")
 
     default_exit_start = max(1, fund_duration_years - 1)
     default_exit_end = fund_duration_years
@@ -152,22 +140,19 @@ with st.sidebar:
 cfg = FundConfig(
     fund_duration_years=fund_duration_years, investment_period_years=investment_period,
     equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
-    debt_tranches=debt_tranches, asset_yield_annual=asset_yield, asset_income_type=asset_income_type.split(" ")[0],
+    debt_tranches=debt_tranches, asset_yield_annual=asset_yield, asset_income_type=asset_income_type,
     equity_for_lending_pct=equity_for_lending_pct, mgmt_fee_basis=mgmt_fee_basis,
     waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp, mgmt_fee_annual_early=mgmt_early,
     mgmt_fee_annual_late=mgmt_late, opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp,
 )
 wcfg = WaterfallConfig(tiers=tiers, pref_then_roc_enabled=roc_first_enabled)
 
-total_fund_debt_commitment = sum(t.amount for t in cfg.debt_tranches)
 with st.spinner("Running scenario..."):
-    df, summary = apply_exit_scenario(
+    # --- SIMPLIFIED FUNCTION CALL ---
+    df, summary = run_fund_scenario(
         cfg=cfg, 
         wcfg=wcfg, 
-        exit_valuation_method=exit_valuation_method,
         equity_multiple=equity_multiple,
-        asset_multiple=asset_multiple,
-        exit_cap_rate=exit_cap_rate,
         exit_years=exit_years
     )
 
@@ -230,39 +215,33 @@ with tab2:
 st.markdown("---")
 st.subheader("Charts")
 if not df.empty:
-    chart_df = pd.DataFrame({
-        "month": df.index.values, "LP_Distribution": df["LP_Distribution"].values,
-        "GP_Distribution": df["GP_Distribution"].values, "Equity_Contribution": df["Equity_Contribution"].values,
-        "Total_Interest_Earned": df["Total_Interest_Earned"].values,
-        "Total_Interest_Incurred": df["Total_Interest_Incurred"].values,
-        "Assets_Outstanding": df["Assets_Outstanding"].values, "Equity_Outstanding": df["Equity_Outstanding"].values,
-        "Debt_Outstanding": df["Debt_Outstanding"].values, "Operating_Cash_Flow": df["Operating_Cash_Flow"].values,
-        "Unused_Capital": df["Unused_Capital"].values
-    })
-    chart_df['Year'] = chart_df['month'] / 12.0
+    # --- CHARTING OPTIMIZATION ---
+    # Add 'Year' column directly to the main DataFrame
+    df['Year'] = df.index / 12.0
+    # All charts now use the original 'df' DataFrame directly
 
-    c1 = alt.Chart(chart_df).transform_fold(
+    c1 = alt.Chart(df).transform_fold(
         ["LP_Distribution","GP_Distribution","Equity_Contribution"], as_=["Type","Value"]
     ).mark_line().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Amount ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, SECONDARY, ACCENT]))
     ).properties(height=300, title="Distributions vs Contributions")
     
-    c2 = alt.Chart(chart_df).transform_fold(
+    c2 = alt.Chart(df).transform_fold(
         ["Total_Interest_Earned","Total_Interest_Incurred"], as_=["Type","Value"]
     ).mark_line().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Amount ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[ACCENT, SECONDARY]), legend=alt.Legend(title="Interest Type"))
     ).properties(height=300, title="Total Interest Earned vs. Incurred (Cash + PIK)")
     
-    c3 = alt.Chart(chart_df).transform_fold(
+    c3 = alt.Chart(df).transform_fold(
         ["Assets_Outstanding","Equity_Outstanding","Debt_Outstanding"], as_=["Type","Value"]
     ).mark_line().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')), y=alt.Y("Value:Q", title="Outstanding ($)"),
         color=alt.Color("Type:N", scale=alt.Scale(range=[PRIMARY, ACCENT, SECONDARY]))
     ).properties(height=300, title="Outstanding Balances Over Time")
     
-    c4 = alt.Chart(chart_df).mark_bar().encode(
+    c4 = alt.Chart(df).mark_bar().encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')),
         y=alt.Y("Operating_Cash_Flow:Q", title="Monthly Cash Flow ($)"),
         color=alt.condition(
@@ -272,7 +251,7 @@ if not df.empty:
         )
     ).properties(height=300, title="Monthly Operating Cash Flow (Surplus / Shortfall)")
 
-    c5 = alt.Chart(chart_df).mark_area(opacity=0.5, color=ACCENT).encode(
+    c5 = alt.Chart(df).mark_area(opacity=0.5, color=ACCENT).encode(
         x=alt.X("Year:Q", title="Year", axis=alt.Axis(format='d')),
         y=alt.Y("Unused_Capital:Q", title="Capital ($)")
     ).properties(height=300, title="Unused Capital (Dry Powder)")

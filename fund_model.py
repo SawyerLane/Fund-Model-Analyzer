@@ -4,18 +4,13 @@ from scipy.optimize import brentq
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Tuple, Dict
 
-from config import FundConfig, WaterfallConfig, ScenarioConfig, WaterfallTier
+# Import from config is now cleaner
+from config import FundConfig, WaterfallConfig, WaterfallTier
 
 def monthly_rate_from_annual_eff(annual_eff: float) -> float:
     """
     Converts an effective annual interest rate to an effective monthly rate.
     This is used for calculations where interest compounds monthly.
-    
-    Args:
-        annual_eff: The effective annual interest rate (e.g., 0.08 for 8%).
-    
-    Returns:
-        The equivalent effective monthly interest rate.
     """
     if annual_eff is None: return None
     return (1.0 + annual_eff)**(1.0/12.0) - 1.0
@@ -23,39 +18,18 @@ def monthly_rate_from_annual_eff(annual_eff: float) -> float:
 def monthly_rate_from_annual_simple(annual: float) -> float:
     """
     Converts a simple annual interest rate to a simple monthly rate.
-    This is typically used for non-compounding interest calculations within a period.
-    
-    Args:
-        annual: The simple annual interest rate (e.g., 0.09 for 9%).
-        
-    Returns:
-        The equivalent simple monthly interest rate.
     """
     return annual / 12.0
 
 def make_month_index(months: int) -> pd.RangeIndex:
     """
     Creates a pandas RangeIndex for the model's timeline, starting from month 1.
-    
-    Args:
-        months: The total number of months in the fund's life.
-        
-    Returns:
-        A pandas RangeIndex from 1 to `months`.
     """
     return pd.RangeIndex(1, months+1, name="month")
 
 def linear_monthly_ramp(cum_targets_by_year: List[float], months: int) -> np.ndarray:
     """
     Generates a monthly cumulative schedule by linearly interpolating between year-end targets.
-    This is used to model the gradual deployment of capital.
-    
-    Args:
-        cum_targets_by_year: A list of cumulative capital amounts at the end of each year.
-        months: The total number of months for the schedule.
-        
-    Returns:
-        A NumPy array representing the cumulative amount outstanding for each month.
     """
     years = len(cum_targets_by_year)
     out = np.zeros(months)
@@ -75,14 +49,6 @@ def linear_monthly_ramp(cum_targets_by_year: List[float], months: int) -> np.nda
 def npv(rate: float, cashflows: np.ndarray, t_index: np.ndarray = None) -> float:
     """
     Calculates the Net Present Value (NPV) of a series of cash flows.
-    
-    Args:
-        rate: The discount rate per period.
-        cashflows: An array of cash flows.
-        t_index: An array of the time periods corresponding to each cash flow.
-        
-    Returns:
-        The calculated NPV as a float.
     """
     if rate is None or np.isnan(rate): return np.nan
     cf = np.asarray(cashflows, dtype=float)
@@ -93,13 +59,6 @@ def npv(rate: float, cashflows: np.ndarray, t_index: np.ndarray = None) -> float
 def solve_irr_bisect(cashflows: np.ndarray, t_index: np.ndarray = None, lo: float = -0.9999, hi: float = 1.0, tol: float = 1e-7) -> float:
     """
     Calculates the Internal Rate of Return (IRR) for a series of cash flows using a robust solver.
-    
-    Args:
-        cashflows: An array of cash flows (positive for inflows, negative for outflows).
-        t_index: An array of time periods for each cash flow.
-        
-    Returns:
-        The calculated IRR per period, or NaN if no solution is found.
     """
     def f(r): return npv(r, cashflows, t_index=t_index)
     
@@ -125,12 +84,6 @@ def solve_irr_bisect(cashflows: np.ndarray, t_index: np.ndarray = None, lo: floa
 def monthly_to_annual_irr(mr: float) -> float:
     """
     Converts a monthly IRR to an annualized IRR.
-    
-    Args:
-        mr: The effective monthly IRR.
-        
-    Returns:
-        The equivalent effective annual IRR.
     """
     if mr is None or np.isnan(mr): return np.nan
     return (1.0 + mr) ** 12 - 1.0
@@ -139,12 +92,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     """
     Constructs the main monthly cash flow schedule for the fund before any waterfall distributions.
     This function models capital deployment, income, expenses, and debt service.
-    
-    Args:
-        cfg: The FundConfig object containing all the primary inputs for the model.
-        
-    Returns:
-        A pandas DataFrame with the detailed monthly cash flows.
     """
     months = cfg.fund_duration_years * 12
     mi = make_month_index(months)
@@ -218,7 +165,8 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
             elif i + 1 < months:
                 t['outstanding'][i+1] += interest
 
-            if t['repayment_type'] == 'Amortizing' and month_num > t['path'].argmax() and t['outstanding'][i] > 0:
+            # Amortizing logic now triggers after the full tranche is drawn down.
+            if t['repayment_type'] == 'Amortizing' and month_num > t['drawdown_end_month'] and t['outstanding'][i] > 0:
                 principal_paid = max(0, t['monthly_payment'] - interest)
                 principal_paid = min(principal_paid, t['outstanding'][i])
                 debt_principal_repay[i] += principal_paid
@@ -240,21 +188,23 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         rate = cfg.mgmt_fee_annual_early if month_num <= investment_period_months else cfg.mgmt_fee_annual_late
         mgmt_fees[i] = max(0, fee_base) * rate / 12.0
 
+    # Maturity Repayments (Bullet payments)
     for t in tranche_details:
         maturity_idx = t['maturity'] - 1
         if 0 <= maturity_idx < months:
+            # The repayment is the outstanding balance in the maturity month
             repayment = t['outstanding'][maturity_idx]
-            if t['type'] == 'PIK':
-                repayment += t['outstanding'][maturity_idx] * t['rate_monthly']
             debt_principal_repay[maturity_idx] += repayment
+            # After repayment, the outstanding balance for this tranche goes to zero
             if maturity_idx + 1 < months:
                 t['outstanding'][maturity_idx + 1:] = 0
     
     final_month_idx = months - 1
     if final_month_idx >= 0:
-        for t in tranche_details:
-            if t['maturity'] > months:
-                debt_principal_repay[final_month_idx] += t['outstanding'][final_month_idx]
+        # Repay any remaining debt in the final month of the fund's life
+        # This handles cases where maturity is beyond the fund's duration
+        remaining_debt_at_end = sum(t['outstanding'][final_month_idx] for t in tranche_details)
+        debt_principal_repay[final_month_idx] += remaining_debt_at_end
 
     oper_cash_flow = asset_cash_income - mgmt_fees - opex - debt_interest_cash
     shortfall = np.minimum(oper_cash_flow, 0)
@@ -268,13 +218,8 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     lp_total_contrib = eq_contrib_deploy * lp_ratio + lp_oper_contrib
     gp_total_contrib = eq_contrib_deploy * gp_ratio + gp_oper_contrib
 
+    # This column is now empty and will be populated by the exit scenario
     equity_principal_repay = np.zeros(months)
-    if months > 0:
-        asset_payoff = mod_assets_path[-1]
-        if cfg.asset_income_type == "PIK":
-            final_income_base = final_debt_out_path[-1] + (eq_out_path[-1] * cfg.equity_for_lending_pct)
-            asset_payoff += final_income_base * r_asset_m_simple
-        equity_principal_repay[-1] = max(asset_payoff - debt_principal_repay.sum(), 0)
     
     df = pd.DataFrame({
         "Assets_Outstanding": mod_assets_path, "Equity_Outstanding": eq_out_path,
@@ -289,10 +234,14 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         "Unused_Capital": unused_capital
     }, index=mi)
 
-    df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Equity_Principal_Repay"]
+    # This now correctly reflects cash available for distribution from operations and debt repayments
+    df["Equity_Distributable_BeforeTopoff"] = np.maximum(oper_cash_flow, 0) + df["Debt_Principal_Repay"]
     return df
 
 def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.DataFrame:
+    """
+    Allocates distributable cash flow to LP and GP based on IRR hurdles.
+    """
     n = df.shape[0]
     mi = df.index.values
     df = df.copy()
@@ -376,70 +325,55 @@ def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.Da
     return df
 
 def months_for_year(year: int) -> Tuple[int, int]:
+    """Helper to get start and end month for a given year."""
     start = (year - 1) * 12 + 1
     end = year * 12
     return start, end
 
-def apply_exit_scenario(
+def run_fund_scenario(
     cfg: FundConfig, wcfg: WaterfallConfig, 
-    exit_valuation_method: str, equity_multiple: float, asset_multiple: float, exit_cap_rate: float,
+    equity_multiple: float,
     exit_years: List[int]
 ) -> Tuple[pd.DataFrame, Dict]:
-    base = build_cash_flows(cfg)
+    """
+    Runs the full fund scenario, including operational cash flows and a final exit event.
+    """
+    # 1. Build the base operational cash flow, including scheduled debt repayments.
+    df = build_cash_flows(cfg)
     
-    gross_exit_proceeds = 0
-    net_proceeds_to_equity = 0
+    # 2. Determine the value of the exit event.
+    # The debt to be repaid at exit is the outstanding balance just before the first exit year.
+    first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(df) - 1
+    debt_repayment_at_exit = df.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in df.index else df['Debt_Outstanding'].iloc[-1]
     
-    first_exit_month = (min(exit_years) - 1) * 12 if exit_years else len(base) -1
-    final_debt_repayment = base.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in base.index else base['Debt_Outstanding'].iloc[-1]
-
-    if exit_valuation_method == "Exit at Book Value":
-        gross_exit_proceeds = base.loc[first_exit_month, 'Assets_Outstanding'] if first_exit_month in base.index else base['Assets_Outstanding'].iloc[-1]
-        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
-
-    elif exit_valuation_method == "Development Equity Multiple":
-        equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
-        equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
-        development_returns = equity_for_development * equity_multiple
-        net_proceeds_to_equity = equity_for_lending + development_returns
-        gross_exit_proceeds = net_proceeds_to_equity + final_debt_repayment
+    # Calculate exit proceeds based on the development equity multiple.
+    equity_for_lending = cfg.equity_commitment * cfg.equity_for_lending_pct
+    equity_for_development = cfg.equity_commitment * (1 - cfg.equity_for_lending_pct)
+    development_returns = equity_for_development * equity_multiple
+    net_proceeds_to_equity = equity_for_lending + development_returns
+    gross_exit_proceeds = net_proceeds_to_equity + debt_repayment_at_exit
     
-    elif exit_valuation_method == "Gross Asset Multiple":
-        total_equity_deployed = base["Equity_Outstanding"].max()
-        total_debt_drawn = base["Debt_Outstanding"].max()
-        total_capital_base = total_equity_deployed + total_debt_drawn
-        gross_exit_proceeds = total_capital_base * asset_multiple
-        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
-    
-    else: # Cap Rate
-        if first_exit_month in base.index:
-            noi_at_exit = base.loc[first_exit_month, 'Total_Interest_Earned'] * 12
-            if exit_cap_rate > 0:
-                gross_exit_proceeds = noi_at_exit / exit_cap_rate
-        else:
-            gross_exit_proceeds = 0
-        net_proceeds_to_equity = max(0, gross_exit_proceeds - final_debt_repayment)
-    
-    df = base.copy()
-    
-    df["Equity_Distributable_BeforeTopoff"] = base["Equity_Distributable_BeforeTopoff"] - base["Equity_Principal_Repay"]
-    df["Equity_Principal_Repay"] = 0.0
-    df["Debt_Principal_Repay"] = 0.0
-
+    # 3. Add the exit event cash flows to the DataFrame.
+    # These are layered on top of the existing operational cash flows.
     if exit_years:
-        debt_repay_per_year = final_debt_repayment / len(exit_years)
-        equity_dist_per_year = net_proceeds_to_equity / len(exit_years)
+        # The debt principal repayment from the exit is distributed across exit years.
+        debt_repay_from_exit_per_year = debt_repayment_at_exit / len(exit_years)
+        # The net equity proceeds from the exit are also distributed.
+        equity_dist_from_exit_per_year = net_proceeds_to_equity / len(exit_years)
         
         for year in exit_years:
             start_month, end_month = months_for_year(year)
             months_in_year = [m for m in range(start_month, end_month + 1) if m in df.index]
             if not months_in_year: continue
             
-            df.loc[months_in_year, "Debt_Principal_Repay"] += debt_repay_per_year / len(months_in_year)
-            df.loc[months_in_year, "Equity_Distributable_BeforeTopoff"] += equity_dist_per_year / len(months_in_year)
+            # Add exit-related cash flows to the existing values.
+            df.loc[months_in_year, "Debt_Principal_Repay"] += debt_repay_from_exit_per_year / len(months_in_year)
+            df.loc[months_in_year, "Equity_Distributable_BeforeTopoff"] += equity_dist_from_exit_per_year / len(months_in_year)
 
+    # 4. Run the waterfall on the combined cash flows.
     out = allocate_waterfall_monthly(df, wcfg)
 
+    # 5. Zero out balances after the final exit month for cleaner reporting.
     if exit_years:
         last_exit_month = max(exit_years) * 12
         last_month_of_fund = cfg.fund_duration_years * 12
@@ -447,7 +381,7 @@ def apply_exit_scenario(
         if final_month in out.index:
             out.loc[final_month:, ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding']] = 0
 
-    total_capital_base = base["Equity_Outstanding"].max() + sum(t.amount for t in cfg.debt_tranches)
+    total_capital_base = df["Equity_Outstanding"].max() + sum(t.amount for t in cfg.debt_tranches)
     
     summary = {
         "Gross_Exit_Proceeds": gross_exit_proceeds,

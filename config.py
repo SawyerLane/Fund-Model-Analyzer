@@ -3,13 +3,14 @@ from typing import List, Optional, Literal
 
 @dataclass
 class WaterfallTier:
+    """Represents a single tier in the distribution waterfall."""
     until_annual_irr: Optional[float]
     lp_split: float
     gp_split: float
 
 @dataclass
 class WaterfallConfig:
-    measure: Literal["annual_irr"] = "annual_irr"
+    """Configuration for the distribution waterfall logic."""
     pref_then_roc_enabled: bool = True
     pref_annual_rate: float = 0.0
     tiers: List[WaterfallTier] = field(default_factory=lambda: [
@@ -21,6 +22,7 @@ class WaterfallConfig:
 
 @dataclass
 class DebtTrancheConfig:
+    """Configuration for a single debt tranche."""
     name: str = "Tranche 1"
     amount: float = 10_000_000.0
     annual_rate: float = 0.06
@@ -28,12 +30,12 @@ class DebtTrancheConfig:
     drawdown_start_month: int = 1
     drawdown_end_month: int = 24
     maturity_month: int = 120
-    # +++ NEW: Fields for flexible repayment logic +++
     repayment_type: Literal["Interest-Only", "Amortizing"] = "Interest-Only"
     amortization_period_years: int = 30
 
 @dataclass
 class FundConfig:
+    """Top-level configuration for the entire fund model."""
     fund_duration_years: int = 15
     investment_period_years: int = 5
     
@@ -53,11 +55,3 @@ class FundConfig:
     opex_annual_fixed: float = 1_200_000.0
     
     eq_ramp_by_year: List[float] = field(default_factory=lambda: [6e6, 12e6, 18e6, 24e6, 30e6])
-
-@dataclass
-class ScenarioConfig:
-    target_equity_moic: float = 1.75
-    net_to_lp: bool = True
-    calibration_mode: Literal["two_year_exit"] = "two_year_exit"
-    exit_years: List[int] = field(default_factory=lambda: [14, 15])
-    exit_weights: List[float] = field(default_factory=lambda: [0.5, 0.5])
