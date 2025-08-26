@@ -120,11 +120,13 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
                 current_cum += monthly_draw
             tranche_path[m] = min(current_cum, tranche.amount)
         
+        # --- BUG FIX: Added the missing 'drawdown_end_month' key ---
         tranche_details.append({
             "path": tranche_path, "rate_monthly": rate_monthly,
             "type": tranche.interest_type, "maturity": tranche.maturity_month,
             "outstanding": tranche_path.copy(), "repayment_type": tranche.repayment_type,
-            "monthly_payment": monthly_payment
+            "monthly_payment": monthly_payment,
+            "drawdown_end_month": tranche.drawdown_end_month
         })
 
     mod_assets_path = eq_out_path + sum(t['path'] for t in tranche_details)
@@ -145,11 +147,9 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     r_treasury_m_simple = monthly_rate_from_annual_simple(cfg.treasury_yield_annual)
     treasury_income = uncalled_equity * r_treasury_m_simple
 
-    # --- NEW LOGIC: Determine when asset income should start ---
-    first_debt_draw_month = months + 1 # Default to a month that will never happen
+    first_debt_draw_month = months + 1 
     if any(t['path'].sum() > 0 for t in tranche_details):
         combined_debt_path = sum(t['path'] for t in tranche_details)
-        # Find the index of the first month where debt > 0
         first_debt_draw_idx = np.argmax(combined_debt_path > 0)
         first_debt_draw_month = first_debt_draw_idx + 1
 
@@ -157,7 +157,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         month_num = i + 1
         current_debt_outstanding = sum(t['outstanding'][i] for t in tranche_details)
         
-        # --- MODIFIED LOGIC: Calculate asset income only after debt is drawn ---
         accrual = 0.0
         if month_num >= first_debt_draw_month:
             income_base = current_debt_outstanding + (eq_out_path[i] * cfg.equity_for_lending_pct)
@@ -389,3 +388,4 @@ def run_fund_scenario(
         "GP_IRR_annual": out.attrs.get("GP_IRR_annual", np.nan),
     }
     return out, summary
+
