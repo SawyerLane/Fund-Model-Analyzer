@@ -87,29 +87,29 @@ def to_excel(df_monthly: pd.DataFrame, df_annual: pd.DataFrame, summary_data: di
 st.sidebar.title("⚙️ Fund Configuration")
 
 # --- 📝 Fund Setup ---
-st.sidebar.subheader("📝 Fund Setup")
-fund_duration_years = st.sidebar.number_input("Fund Duration (Years)", min_value=1, max_value=50, value=15)
-investment_period = st.sidebar.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5)
-equity_commit = st.sidebar.number_input("Total Equity Commitment ($)", min_value=1_000_000, value=30_000_000, step=1_000_000, format="%d")
-lp_commit = st.sidebar.number_input("LP Commitment ($)", min_value=1_000_000, value=25_000_000, step=1_000_000, format="%d")
-gp_commit = st.sidebar.number_input("GP Commitment ($)", min_value=0, value=5_000_000, step=1_000_000, format="%d")
+with st.sidebar.expander("📝 Fund Setup", expanded=True):
+    fund_duration_years = st.number_input("Fund Duration (Years)", min_value=1, max_value=50, value=15)
+    investment_period = st.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5)
+    equity_commit = st.number_input("Total Equity Commitment ($)", min_value=1_000_000, value=30_000_000, step=1_000_000, format="%d")
+    lp_commit = st.number_input("LP Commitment ($)", min_value=1_000_000, value=25_000_000, step=1_000_000, format="%d")
+    gp_commit = st.number_input("GP Commitment ($)", min_value=0, value=5_000_000, step=1_000_000, format="%d")
 
-# Live validation for commitments
-if abs((lp_commit + gp_commit) - equity_commit) > 100: # Tolerance for rounding
-    st.sidebar.error(f"LP + GP commitments (${lp_commit + gp_commit:,.0f}) must equal total equity (${equity_commit:,.0f}).")
-else:
-    st.sidebar.success("Commitments are balanced.")
+    # Live validation for commitments
+    if abs((lp_commit + gp_commit) - equity_commit) > 100: # Tolerance for rounding
+        st.error(f"LP + GP commitments (${lp_commit + gp_commit:,.0f}) must equal total equity (${equity_commit:,.0f}).")
+    else:
+        st.success("Commitments are balanced.")
 
 # --- 🏗️ Capital Deployment ---
-st.sidebar.subheader("🏗️ Capital Deployment")
-with st.sidebar.expander("Equity Deployment Schedule"):
+with st.sidebar.expander("🏗️ Capital Deployment"):
+    st.subheader("Equity Deployment")
     eq_ramp = []
     for year in range(1, investment_period + 1):
         default_value = min(year * equity_commit / investment_period, equity_commit)
         eq_ramp.append(st.number_input(f"Cumulative by Year {year} ($)", 
                                      min_value=0, value=int(default_value), step=1_000_000, format="%d", key=f"eq_ramp_{year}"))
-
-with st.sidebar.expander("💳 Debt Structure"):
+    
+    st.subheader("Debt Structure")
     num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=1)
     debt_tranches_data = []
     for i in range(num_tranches):
@@ -123,11 +123,12 @@ with st.sidebar.expander("💳 Debt Structure"):
         debt_tranches_data.append({ "name": f"Tranche {i+1}", "amount": amount, "annual_rate": annual_rate / 100.0, "interest_type": interest_type, "drawdown_start_month": drawdown_start, "drawdown_end_month": drawdown_end, "maturity_month": maturity_month, "repayment_type": "Interest-Only", "amortization_period_years": 30 })
 
 # --- 💰 Economics & Fees ---
-st.sidebar.subheader("💰 Economics & Fees")
-asset_yield = st.sidebar.number_input("Asset Yield (Annual %)", min_value=0.0, max_value=50.0, value=9.0, step=0.1) / 100
-asset_income_type = st.sidebar.selectbox("Asset Income Type", ["Cash", "PIK"], index=1)
-treasury_yield = st.sidebar.number_input("Treasury Yield (Annual %)", min_value=0.0, max_value=10.0, value=0.0, step=0.1) / 100
-with st.sidebar.expander("Management Fees & Opex"):
+with st.sidebar.expander("💰 Economics & Fees"):
+    asset_yield = st.number_input("Asset Yield (Annual %)", min_value=0.0, max_value=50.0, value=9.0, step=0.1) / 100
+    asset_income_type = st.selectbox("Asset Income Type", ["Cash", "PIK"], index=1)
+    treasury_yield = st.number_input("Treasury Yield (Annual %)", min_value=0.0, max_value=10.0, value=0.0, step=0.1) / 100
+    
+    st.subheader("Management Fees & Opex")
     mgmt_fee_basis = st.selectbox("Fee Basis", ["Equity Commitment", "Assets Outstanding"])
     waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True)
     mgmt_early = st.number_input("Fee - Early Period (%)", value=1.75, step=0.1) / 100
@@ -135,41 +136,50 @@ with st.sidebar.expander("Management Fees & Opex"):
     opex_annual = st.number_input("Annual Opex ($)", value=1_200_000, step=50_000, format="%d")
 
 # --- 🌊 Distribution Waterfall ---
-st.sidebar.subheader("🌊 Distribution Waterfall")
-default_tiers_df = pd.DataFrame([
-    {"Hurdle (%)": 8.0, "LP Split (%)": 100.0, "GP Split (%)": 0.0},
-    {"Hurdle (%)": 12.0, "LP Split (%)": 72.0, "GP Split (%)": 28.0},
-    {"Hurdle (%)": 15.0, "LP Split (%)": 63.0, "GP Split (%)": 37.0},
-    {"Hurdle (%)": np.nan, "LP Split (%)": 54.0, "GP Split (%)": 46.0}, # Use NaN for the final tier
-])
-edited_tiers_df = st.sidebar.data_editor(default_tiers_df, num_rows="dynamic", hide_index=True)
+with st.sidebar.expander("🌊 Distribution Waterfall"):
+    num_tiers = st.number_input("Number of Tiers", min_value=2, max_value=6, value=4)
+    waterfall_tiers = []
+    default_tiers = [
+        {"hurdle": 8.0, "lp_split": 100.0}, {"hurdle": 12.0, "lp_split": 72.0},
+        {"hurdle": 15.0, "lp_split": 63.0}, {"hurdle": None, "lp_split": 54.0}
+    ]
+    for i in range(num_tiers):
+        st.markdown(f"**Tier {i+1}**")
+        col1, col2 = st.columns(2)
+        
+        default_hurdle = default_tiers[i]["hurdle"] if i < len(default_tiers) else 10.0
+        default_lp_split = default_tiers[i]["lp_split"] if i < len(default_tiers) else 80.0
+
+        if i == num_tiers - 1: # Last tier
+            hurdle_val = None
+            col1.text_input("IRR Hurdle (%)", "Final Tier", disabled=True, key=f"w_hurdle_{i}")
+        else:
+            hurdle_val = col1.number_input("IRR Hurdle (%)", value=default_hurdle, step=1.0, key=f"w_hurdle_{i}")
+
+        lp_split_val = col2.number_input("LP Split (%)", value=default_lp_split, min_value=0.0, max_value=100.0, step=1.0, key=f"w_lp_split_{i}")
+        
+        waterfall_tiers.append(WaterfallTier(
+            until_annual_irr=None if hurdle_val is None else hurdle_val / 100.0,
+            lp_split=lp_split_val / 100.0,
+            gp_split=(100.0 - lp_split_val) / 100.0
+        ))
+
+# --- 📊 Scenario Analysis ---
+with st.sidebar.expander("📊 Scenario Analysis", expanded=True):
+    equity_multiple = st.slider("Exit Equity Multiple", min_value=0.0, max_value=5.0, value=2.5, step=0.1)
+    exit_years_options = list(range(1, fund_duration_years + 1))
+    default_exit_years = [y for y in [fund_duration_years - 1, fund_duration_years] if y in exit_years_options]
+    exit_years = st.multiselect("Exit Years", options=exit_years_options, default=default_exit_years)
 
 
 # --- Main Panel ---
 
 st.title("📈 Private Equity Fund Model")
-st.markdown("This model calculates fund-level cash flows, distributions, and performance metrics based on your configurations in the sidebar.")
-
-# --- 📊 Scenario Analysis ---
-st.header("📊 Scenario Analysis")
-col1, col2 = st.columns(2)
-with col1:
-    equity_multiple = st.slider("Exit Equity Multiple", min_value=0.0, max_value=5.0, value=2.5, step=0.1)
-with col2:
-    exit_years = st.multiselect("Exit Years", options=list(range(1, fund_duration_years + 1)), default=[fund_duration_years - 1, fund_duration_years])
+st.markdown("Configure your fund and scenario in the sidebar. Results will update automatically.")
 
 # --- Live Model Execution & Results ---
 try:
-    # 1. Create WaterfallConfig from the data editor
-    waterfall_tiers = []
-    for _, row in edited_tiers_df.iterrows():
-        hurdle = row["Hurdle (%)"]
-        lp_split = row["LP Split (%)"]
-        waterfall_tiers.append(WaterfallTier(
-            until_annual_irr=None if pd.isna(hurdle) else hurdle / 100.0,
-            lp_split=lp_split / 100.0,
-            gp_split=(100.0 - lp_split) / 100.0
-        ))
+    # 1. Create WaterfallConfig
     wcfg = WaterfallConfig(tiers=waterfall_tiers)
 
     # 2. Create FundConfig
