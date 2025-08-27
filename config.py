@@ -2,6 +2,13 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Literal
 
 @dataclass
+class ExitYearConfig:
+    """Configuration for a single year's exit event."""
+    year: int
+    pct_of_portfolio_sold: float = 1.0
+    equity_multiple: float = 1.0
+
+@dataclass
 class WaterfallTier:
     """Represents a single tier in the distribution waterfall."""
     until_annual_irr: Optional[float]
@@ -23,7 +30,6 @@ class WaterfallTier:
 class WaterfallConfig:
     """Configuration for the distribution waterfall logic."""
     pref_then_roc_enabled: bool = True
-    pref_annual_rate: float = 0.0
     tiers: List[WaterfallTier] = field(default_factory=lambda: [
         WaterfallTier(until_annual_irr=0.08, lp_split=1.00, gp_split=0.00),
         WaterfallTier(until_annual_irr=0.12, lp_split=0.72, gp_split=0.28),
@@ -156,7 +162,6 @@ class FundConfig:
             raise ValueError(f"Final equity ramp amount ({self.eq_ramp_by_year[-1]}) must equal equity commitment ({self.equity_commitment})")
         
         # Debt tranche validation
-        total_debt = sum(t.amount for t in self.debt_tranches)
         max_fund_months = self.fund_duration_years * 12
         for i, tranche in enumerate(self.debt_tranches):
             if tranche.maturity_month > max_fund_months:
