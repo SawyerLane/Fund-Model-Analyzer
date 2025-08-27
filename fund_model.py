@@ -649,22 +649,43 @@ def run_fund_scenario(
     net_proceeds_to_equity = equity_for_lending + development_returns
     gross_exit_proceeds = net_proceeds_to_equity + debt_repayment_at_exit
     
-    # Distribute exit proceeds across exit years
+    # Distribute exit proceeds across exit years and repay debt
     if len(exit_years) > 0:
+        # Create a schedule of monthly repayments and equity distributions from the exit
+        monthly_repayments = pd.Series(0.0, index=df.index)
+        monthly_equity_dists = pd.Series(0.0, index=df.index)
+
         debt_repay_per_year = debt_repayment_at_exit / len(exit_years)
         equity_dist_per_year = net_proceeds_to_equity / len(exit_years)
         
         for year in exit_years:
             start_month, end_month = months_for_year(year)
-            months_in_year = [m for m in range(start_month, end_month + 1) 
-                            if m in df.index]
+            months_in_year = [m for m in range(start_month, end_month + 1) if m in df.index]
             
             if months_in_year:
                 monthly_debt_repay = debt_repay_per_year / len(months_in_year)
                 monthly_equity_dist = equity_dist_per_year / len(months_in_year)
+                monthly_repayments.loc[months_in_year] = monthly_debt_repay
+                monthly_equity_dists.loc[months_in_year] = monthly_equity_dist
+
+        # Apply the scheduled repayments and distributions month-by-month
+        # This ensures the outstanding balance is correctly reduced over time
+        for month in df.index:
+            # Add equity distribution for this month
+            df.loc[month, "Equity_Distributable_BeforeTopoff"] += monthly_equity_dists.loc[month]
+
+            # Process debt repayment
+            repayment_due = monthly_repayments.loc[month]
+            if repayment_due > 1e-6:
+                # Ensure we don't repay more than is outstanding
+                actual_repayment = min(df.loc[month, "Debt_Outstanding"], repayment_due)
+                df.loc[month, "Debt_Principal_Repay"] += actual_repayment
                 
-                df.loc[months_in_year, "Debt_Principal_Repay"] += monthly_debt_repay
-                df.loc[months_in_year, "Equity_Distributable_BeforeTopoff"] += monthly_equity_dist
+                # Reduce outstanding balance for this month and all subsequent months
+                df.loc[month:, "Debt_Outstanding"] -= actual_repayment
+        
+        # Ensure balances don't fall below zero due to floating point issues
+        df["Debt_Outstanding"] = df["Debt_Outstanding"].clip(lower=0)
 
     # Apply waterfall allocation
     out = allocate_waterfall_monthly(df, wcfg)
