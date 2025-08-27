@@ -81,7 +81,6 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
     months = cfg.fund_duration_years * 12
     mi = make_month_index(months)
     
-    # --- Initialize Schedules and Arrays ---
     eq_out_path = linear_monthly_ramp(cfg.eq_ramp_by_year, months)
     
     # Create monthly drawdown schedules for each debt tranche
@@ -91,55 +90,52 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         monthly_draw = tranche.amount / draw_months
         for m in range(tranche.drawdown_start_month - 1, tranche.drawdown_end_month):
             if m < months: debt_drawdowns[i, m] = monthly_draw
-    
+
     # Initialize output arrays
     cols = ["Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding", "Unused_Capital",
             "Asset_Interest_Income", "Treasury_Income", "Mgmt_Fees", "Opex", "Debt_Interest",
             "Debt_Principal_Repay", "LP_Contribution", "GP_Contribution"]
     df = pd.DataFrame(0.0, index=mi, columns=cols)
+    
+    # Array to track each debt tranche's balance individually
+    tranche_balances = np.zeros((len(cfg.debt_tranches), months))
 
     r_asset_m_eff = monthly_rate_from_annual_eff(cfg.asset_yield_annual)
     r_treasury_m_simple = monthly_rate_from_annual_simple(cfg.treasury_yield_annual)
     
-    # --- Monthly Calculation Loop ---
     for i in range(months):
-        m = i + 1 # Month number (1-indexed)
-        prev_m = i
+        m = i + 1
+        prev_i = i - 1
         
         # Determine beginning-of-period balances
-        if i == 0:
-            equity_outstanding_bop = 0
-            debt_outstanding_bop = 0
-            assets_outstanding_bop = 0
-        else:
-            equity_outstanding_bop = df.iat[prev_m, df.columns.get_loc("Equity_Outstanding")]
-            debt_outstanding_bop = df.iat[prev_m, df.columns.get_loc("Debt_Outstanding")]
-            assets_outstanding_bop = df.iat[prev_m, df.columns.get_loc("Assets_Outstanding")]
-
-        # Contributions and Capital Deployment
-        equity_contribution = eq_out_path[i] - equity_outstanding_bop
+        equity_outstanding_bop = df.iat[prev_i, df.columns.get_loc("Equity_Outstanding")] if i > 0 else 0
+        debt_outstanding_bop = df.iat[prev_i, df.columns.get_loc("Debt_Outstanding")] if i > 0 else 0
+        assets_outstanding_bop = df.iat[prev_i, df.columns.get_loc("Assets_Outstanding")] if i > 0 else 0
+        
+        # Capital Deployment
+        equity_contribution = eq_out_path[i] - equity_outstanding_bop if i > 0 else eq_out_path[i]
         debt_contribution = debt_drawdowns[:, i].sum()
-
+        
+        # Set EOP (End-of-Period) balances before income/expenses
         df.iat[i, df.columns.get_loc("Equity_Outstanding")] = equity_outstanding_bop + equity_contribution
-        df.iat[i, df.columns.get_loc("Debt_Outstanding")] = debt_outstanding_bop + debt_contribution
-        df.iat[i, df.columns.get_loc("Assets_Outstanding")] = assets_outstanding_bop + equity_contribution + debt_contribution
-
-        # Calculate Income
+        
+        current_debt_outstanding = debt_outstanding_bop + debt_contribution
+        
+        # Income Calculation
         uncalled_equity = max(0, cfg.equity_commitment - df.iat[i, df.columns.get_loc("Equity_Outstanding")])
-        treasury_income = uncalled_equity * r_treasury_m_simple
+        df.iat[i, df.columns.get_loc("Treasury_Income")] = uncalled_equity * r_treasury_m_simple
         
         income_base = debt_outstanding_bop + (equity_outstanding_bop * cfg.equity_for_lending_pct)
         asset_interest = max(0, income_base) * r_asset_m_eff
 
+        asset_pik_accrual = 0
         if cfg.asset_income_type == 'Cash':
             df.iat[i, df.columns.get_loc("Asset_Interest_Income")] = asset_interest
         else: # PIK
-            df.iat[i, df.columns.get_loc("Assets_Outstanding")] += asset_interest
-        
-        # Calculate Expenses
-        df.iat[i, df.columns.get_loc("Treasury_Income")] = treasury_income
-        df.iat[i, df.columns.get_loc("Opex")] = cfg.opex_annual_fixed / 12.0
+            asset_pik_accrual = asset_interest
 
+        # Expenses
+        df.iat[i, df.columns.get_loc("Opex")] = cfg.opex_annual_fixed / 12.0
         investment_period_months = cfg.investment_period_years * 12
         fee_rate = cfg.mgmt_fee_annual_early if m <= investment_period_months else cfg.mgmt_fee_annual_late
         fee_base = cfg.equity_commitment if cfg.mgmt_fee_basis == "Equity Commitment" else assets_outstanding_bop
@@ -147,40 +143,46 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
             fee_base -= cfg.gp_commitment
         df.iat[i, df.columns.get_loc("Mgmt_Fees")] = max(0, fee_base) * fee_rate / 12.0
 
-        # Debt Service (Interest and Principal)
-        debt_interest_cash = 0
+        # Debt Service (Interest and Principal), tracked per tranche
+        debt_interest_cash_total = 0
+        principal_repaid_total = 0
+        
         for t_idx, tranche in enumerate(cfg.debt_tranches):
-            # Find debt outstanding for this specific tranche at BOP
-            # This is simplified; a more complex model would track each tranche separately
-            tranche_share = tranche.amount / sum(t.amount for t in cfg.debt_tranches) if sum(t.amount for t in cfg.debt_tranches) > 0 else 0
-            tranche_debt_bop = debt_outstanding_bop * tranche_share
+            tranche_bop = tranche_balances[t_idx, prev_i] if i > 0 else 0
+            tranche_drawn = debt_drawdowns[t_idx, i]
+            current_tranche_balance = tranche_bop + tranche_drawn
             
-            interest = tranche_debt_bop * monthly_rate_from_annual_simple(tranche.annual_rate)
+            interest = current_tranche_balance * monthly_rate_from_annual_simple(tranche.annual_rate)
+            
             if tranche.interest_type == 'Cash':
-                debt_interest_cash += interest
+                debt_interest_cash_total += interest
             else: # PIK
-                df.iat[i, df.columns.get_loc("Debt_Outstanding")] += interest
-                df.iat[i, df.columns.get_loc("Assets_Outstanding")] += interest
-            
-            # Scheduled Repayments (Maturity)
-            if m == tranche.maturity_month:
-                repayment = tranche_debt_bop + (interest if tranche.interest_type == 'PIK' else 0)
-                df.iat[i, df.columns.get_loc("Debt_Principal_Repay")] += repayment
-                df.iat[i, df.columns.get_loc("Debt_Outstanding")] -= repayment
+                current_tranche_balance += interest
 
-        df.iat[i, df.columns.get_loc("Debt_Interest")] = debt_interest_cash
-    
-    # --- Post-Loop Calculations ---
+            if m == tranche.maturity_month:
+                principal_repaid_total += current_tranche_balance
+                current_tranche_balance = 0
+
+            tranche_balances[t_idx, i] = current_tranche_balance
+
+        df.iat[i, df.columns.get_loc("Debt_Interest")] = debt_interest_cash_total
+        df.iat[i, df.columns.get_loc("Debt_Principal_Repay")] = principal_repaid_total
+        df.iat[i, df.columns.get_loc("Debt_Outstanding")] = tranche_balances[:, i].sum()
+        
+        # Final EOP Assets Outstanding
+        df.iat[i, df.columns.get_loc("Assets_Outstanding")] = df.iat[i, df.columns.get_loc("Equity_Outstanding")] + df.iat[i, df.columns.get_loc("Debt_Outstanding")] + asset_pik_accrual
+
+    # Post-Loop Calculations
     total_commit = cfg.equity_commitment + sum(t.amount for t in cfg.debt_tranches)
     total_deployed = df["Equity_Outstanding"] + df["Debt_Outstanding"]
-    df["Unused_Capital"] = total_commit - total_deployed
+    df["Unused_Capital"] = total_commit - total_deployed.clip(lower=0)
 
     equity_commitment_safe = max(cfg.equity_commitment, 1e-9)
     lp_ratio = cfg.lp_commitment / equity_commitment_safe
     gp_ratio = cfg.gp_commitment / equity_commitment_safe
     
-    df["LP_Contribution"] = np.maximum(0, df["Equity_Outstanding"].diff(periods=1).fillna(df["Equity_Outstanding"])) * lp_ratio
-    df["GP_Contribution"] = np.maximum(0, df["Equity_Outstanding"].diff(periods=1).fillna(df["Equity_Outstanding"])) * gp_ratio
+    df["LP_Contribution"] = np.maximum(0, df["Equity_Outstanding"].diff().fillna(df["Equity_Outstanding"])) * lp_ratio
+    df["GP_Contribution"] = np.maximum(0, df["Equity_Outstanding"].diff().fillna(df["Equity_Outstanding"])) * gp_ratio
     
     oper_cash_flow = df["Asset_Interest_Income"] + df["Treasury_Income"] - df["Mgmt_Fees"] - df["Opex"] - df["Debt_Interest"]
     shortfall = np.minimum(oper_cash_flow, 0)
@@ -210,11 +212,26 @@ def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.Da
     lp_pro_rata = total_lp_contrib / total_equity_contrib if total_equity_contrib > 1e-6 else 1.0
     gp_pro_rata = 1.0 - lp_pro_rata
 
+    def get_dist_for_irr(cf_series: np.ndarray, target_irr_monthly: float, k: int, tolerance: float = 1e-6) -> float:
+        if k < 0 or k >= len(cf_series): return 0.0
+        cf_through_k = cf_series[:k+1].copy()
+        
+        def npv_with_additional_dist(additional_dist):
+            test_cf = cf_through_k.copy()
+            test_cf[k] += additional_dist
+            return npv(target_irr_monthly, test_cf, t_index=mi[:k+1])
+        
+        if npv_with_additional_dist(0) <= tolerance: return 0.0
+        max_reasonable_dist = 1e12
+        if npv_with_additional_dist(max_reasonable_dist) > tolerance: return np.inf
+        try:
+            return max(0, brentq(npv_with_additional_dist, 0, max_reasonable_dist, xtol=tolerance, rtol=tolerance))
+        except (RuntimeError, ValueError): return np.inf
+
     for t in range(n):
         D = float(df.at[mi[t], "Equity_Distributable_BeforeTopoff"])
         if D <= 1e-6: continue
 
-        # Return of Capital
         cum_contrib = df.loc[mi[0]:mi[t], ["LP_Contribution", "GP_Contribution"]].sum().sum()
         cum_dist = df.loc[mi[0]:mi[t-1] if t > 0 else mi[0], ["LP_Distribution", "GP_Distribution"]].sum().sum()
         capital_shortfall = cum_contrib - cum_dist
@@ -222,49 +239,31 @@ def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.Da
         if capital_shortfall > 1e-6:
             roc_dist = min(D, capital_shortfall)
             lp_roc, gp_roc = roc_dist * lp_pro_rata, roc_dist * gp_pro_rata
-            df.at[mi[t], "LP_Distribution"] += lp_roc
-            df.at[mi[t], "GP_Distribution"] += gp_roc
-            lp_cf[t] += lp_roc
-            gp_cf[t] += gp_roc
+            df.at[mi[t], "LP_Distribution"] += lp_roc; df.at[mi[t], "GP_Distribution"] += gp_roc
+            lp_cf[t] += lp_roc; gp_cf[t] += gp_roc
             D -= roc_dist
 
-        # Waterfall Tiers
         for tier in wcfg.tiers:
             if D <= 1e-6: break
-            
             if tier.until_annual_irr is None:
                 lp_take, gp_take = D * tier.lp_split, D * tier.gp_split
-                df.at[mi[t], "LP_Distribution"] += lp_take
-                df.at[mi[t], "GP_Distribution"] += gp_take
-                lp_cf[t] += lp_take
-                gp_cf[t] += gp_take
-                D = 0
-                continue
+                df.at[mi[t], "LP_Distribution"] += lp_take; df.at[mi[t], "GP_Distribution"] += gp_take
+                lp_cf[t] += lp_take; gp_cf[t] += gp_take
+                D = 0; continue
 
-            target_monthly_irr = monthly_rate_from_annual_eff(tier.until_annual_irr) # <-- CORRECTED THIS LINE
-            # Simplified IRR calculation for distribution
-            npv_at_target = npv(target_monthly_irr, lp_cf[:t+1], mi[:t+1])
-            if npv_at_target <= 1e-6:
-                continue
-
-            # This is an approximation of the distribution needed. A solver would be more accurate.
-            discount_factor = (1 + target_monthly_irr)**t
-            additional_lp_dist_needed = npv_at_target * discount_factor
+            target_monthly_irr = monthly_rate_from_annual_eff(tier.until_annual_irr)
+            additional_lp_dist_needed = get_dist_for_irr(lp_cf, target_monthly_irr, t)
             
-            if additional_lp_dist_needed <= 1e-6: continue
+            if additional_lp_dist_needed == 0 or additional_lp_dist_needed == np.inf: continue
             
             total_cash_for_tier = additional_lp_dist_needed / tier.lp_split if tier.lp_split > 1e-10 else np.inf
             take = min(D, total_cash_for_tier)
             lp_take, gp_take = take * tier.lp_split, take * tier.gp_split
-            df.at[mi[t], "LP_Distribution"] += lp_take
-            df.at[mi[t], "GP_Distribution"] += gp_take
-            lp_cf[t] += lp_take
-            gp_cf[t] += gp_take
+            df.at[mi[t], "LP_Distribution"] += lp_take; df.at[mi[t], "GP_Distribution"] += gp_take
+            lp_cf[t] += lp_take; gp_cf[t] += gp_take
             D -= take
     
-    lp_mirr = solve_irr_bisect(lp_cf, t_index=mi)
-    gp_mirr = solve_irr_bisect(gp_cf, t_index=mi)
-    
+    lp_mirr = solve_irr_bisect(lp_cf, t_index=mi); gp_mirr = solve_irr_bisect(gp_cf, t_index=mi)
     df.attrs["LP_IRR_annual"] = monthly_to_annual_irr(lp_mirr)
     df.attrs["GP_IRR_annual"] = monthly_to_annual_irr(gp_mirr)
     df.attrs["LP_MOIC"] = df["LP_Distribution"].sum() / max(df["LP_Contribution"].sum(), 1e-9)
@@ -289,18 +288,17 @@ def run_fund_scenario(
     df = build_cash_flows(cfg)
     
     first_exit_month = (min(exit_years) - 1) * 12 + 1
-    debt_repayment_at_exit = df.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in df.index else 0
+    equity_at_exit = df.loc[first_exit_month, 'Equity_Outstanding'] if first_exit_month in df.index else 0
+    debt_at_exit = df.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in df.index else 0
     
-    # Exit proceeds based on total assets, not just equity.
-    assets_at_exit = df.loc[first_exit_month, 'Assets_Outstanding'] if first_exit_month in df.index else 0
-    gross_exit_proceeds = assets_at_exit * equity_multiple
-    net_proceeds_to_equity = gross_exit_proceeds - debt_repayment_at_exit
-
+    net_proceeds_to_equity = equity_at_exit * equity_multiple
+    gross_exit_proceeds = net_proceeds_to_equity + debt_at_exit
+    
     if len(exit_years) > 0:
         monthly_repayments = pd.Series(0.0, index=df.index)
         monthly_equity_dists = pd.Series(0.0, index=df.index)
         
-        debt_repay_per_year = debt_repayment_at_exit / len(exit_years)
+        debt_repay_per_year = debt_at_exit / len(exit_years)
         equity_dist_per_year = net_proceeds_to_equity / len(exit_years)
         
         for year in exit_years:
@@ -319,17 +317,15 @@ def run_fund_scenario(
                 df.loc[month:, "Debt_Outstanding"] -= actual_repayment
         
         df["Debt_Outstanding"] = df["Debt_Outstanding"].clip(lower=0)
-        # At exit, assets are sold, so outstanding assets should become zero
         last_exit_month = max(exit_years) * 12
         df.loc[last_exit_month:, ["Assets_Outstanding", "Equity_Outstanding"]] = 0
-
 
     out = allocate_waterfall_monthly(df, wcfg)
     
     summary = {
         "Gross_Exit_Proceeds": gross_exit_proceeds,
         "Net_Proceeds_to_Equity": net_proceeds_to_equity,
-        "Net_Equity_Multiple": (net_proceeds_to_equity / max(cfg.equity_commitment, 1e-9)),
+        "Net_Equity_Multiple": (net_proceeds_to_equity / max(equity_at_exit, 1e-9)),
         "LP_MOIC": out.attrs.get("LP_MOIC", 0.0),
         "GP_MOIC": out.attrs.get("GP_MOIC", 0.0),
         "LP_IRR_annual": out.attrs.get("LP_IRR_annual", 0.0),

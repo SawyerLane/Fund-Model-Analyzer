@@ -239,7 +239,7 @@ try:
     annual_df.reset_index(inplace=True)
 
     # --- Charting ---
-    color_scheme = {"blue": "#004E89", "orange": "#FF6700", "grey": "#A0A0A0"}
+    color_scheme = {"blue": "#56B4E9", "orange": "#FF6700", "grey": "#A0A0A0"}
 
     # Chart 1: Capital Deployment & Dry Powder
     capital_deployed_data = annual_df.melt(id_vars=['Year'], value_vars=['Equity_Outstanding', 'Debt_Outstanding'], var_name='Capital Type', value_name='Amount')
@@ -247,7 +247,7 @@ try:
     area = alt.Chart(capital_deployed_data).mark_area().encode(
         x=alt.X('Year:O', title='Year'),
         y=alt.Y('Amount:Q', title='Capital Deployed ($)'),
-        color=alt.Color('Capital Type:N', scale=alt.Scale(domain=['Equity_Outstanding', 'Debt_Outstanding'], range=[color_scheme["blue"], color_scheme["orange"]]))
+        color=alt.Color('Capital Type:N', scale=alt.Scale(domain=['Equity_Outstanding', 'Debt_Outstanding'], range=[color_scheme["blue"], color_scheme["orange"]]), legend=alt.Legend(title="Capital Type"))
     )
 
     line = alt.Chart(annual_df).mark_line(color=color_scheme["grey"], strokeDash=[5,5]).encode(
@@ -300,7 +300,8 @@ try:
         st.dataframe(annual_df[['Year'] + display_cols].style.format("{:,.0f}", subset=display_cols))
 
     with st.expander("View Monthly Cash Flows"):
-        st.dataframe(monthly_df.style.format("{:,.0f}", subset=monthly_df.columns.drop("Tier_Used")))
+        cols_to_format = [col for col in monthly_df.columns if col != 'Tier_Used']
+        st.dataframe(monthly_df.style.format("{:,.0f}", subset=cols_to_format))
 
     st.subheader("📥 Export")
     excel_file = to_excel(monthly_df, annual_df, summary, cfg, wcfg)
