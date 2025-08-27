@@ -111,7 +111,7 @@ def npv(rate: float, cashflows: np.ndarray, t_index: np.ndarray = None) -> float
     try:
         discount_factors = np.exp(-times * np.log(1.0 + rate))
         return float(np.sum(cf * discount_factors))
-    except (OverflowError, UnderflowError):
+    except (OverflowError, np.UnderflowError):
         return np.nan
 
 def solve_irr_bisect(cashflows: np.ndarray, t_index: np.ndarray = None, 
@@ -702,4 +702,3 @@ def run_fund_scenario(
         print(f"Warning: Large cash flow imbalance detected: ${cash_validation.get('net_operating', 0):,.0f}")
     
     return out, summary
-
