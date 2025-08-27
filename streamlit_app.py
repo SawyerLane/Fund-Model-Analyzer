@@ -265,37 +265,70 @@ try:
     monthly_df['Year'] = ((monthly_df.index - 1) // 12) + 1
     annual_df = monthly_df.groupby('Year').sum()
     annual_df['Annual_LP_Net_Cash_Flow'] = annual_df['LP_Distribution'] - annual_df['LP_Contribution']
+    # Get end-of-year balances by taking the last month's value for each year
+    eoy_balances = monthly_df.groupby('Year')[['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'Unused_Capital']].last()
+    annual_df = annual_df.join(eoy_balances)
     annual_df.reset_index(inplace=True)
 
     # Prosper NWT Brand Colors
-    color_scheme = {"blue": "#004E89", "orange": "#FF6700"}
+    color_scheme = {"blue": "#004E89", "orange": "#FF6700", "grey": "#A0A0A0"}
 
-    # Chart 1: LP Net Cash Flow (J-Curve) as a Bar Chart
-    j_curve_chart = alt.Chart(annual_df).mark_bar().encode(
+    # Chart 1: Capital Deployment & Dry Powder
+    base = alt.Chart(annual_df).encode(x=alt.X('Year:O', title='Year'))
+    
+    capital_deployed_data = annual_df.melt(id_vars=['Year'], value_vars=['Equity_Outstanding', 'Debt_Outstanding'], var_name='Capital Type', value_name='Amount')
+    
+    area = base.mark_area().encode(
+        y=alt.Y('Amount:Q', title='Capital Deployed ($)'),
+        color=alt.Color('Capital Type:N', scale=alt.Scale(domain=['Equity_Outstanding', 'Debt_Outstanding'], range=[color_scheme["blue"], color_scheme["orange"]]))
+    ).data(capital_deployed_data)
+
+    line = base.mark_line(color=color_scheme["grey"], strokeDash=[5,5]).encode(
+        y=alt.Y('Unused_Capital:Q', title='Dry Powder ($)'),
+        tooltip=['Year', alt.Tooltip('Unused_Capital:Q', format='$,.0f')]
+    ).properties(title="Capital Deployment & Dry Powder")
+
+    deployment_chart = alt.layer(area, line).resolve_scale(y='independent').properties(title="Capital Deployment & Dry Powder")
+    st.altair_chart(deployment_chart, use_container_width=True)
+
+
+    # Chart 2: LP Net Cash Flow (J-Curve) as a Bar Chart
+    j_curve_chart = alt.Chart(annual_df).mark_bar(size=20, cornerRadius=5).encode(
         x=alt.X('Year:O', title='Year'),
         y=alt.Y('Annual_LP_Net_Cash_Flow:Q', title='Annual Net Cash Flow ($)'),
         color=alt.condition(
             alt.datum.Annual_LP_Net_Cash_Flow > 0,
-            alt.value(color_scheme["blue"]),  # Positive bars in blue
-            alt.value(color_scheme["orange"])   # Negative bars in orange
+            alt.value(color_scheme["blue"]),
+            alt.value(color_scheme["orange"])
         ),
         tooltip=['Year', alt.Tooltip('Annual_LP_Net_Cash_Flow:Q', format='$,.0f')]
     ).properties(title="LP Annual Net Cash Flow (J-Curve)")
     st.altair_chart(j_curve_chart, use_container_width=True)
 
-    # Chart 2: Annual Distributions
+    # Chart 3: Annual Distributions
     dist_data = annual_df[['Year', 'LP_Distribution', 'GP_Distribution']].melt('Year', var_name='Party', value_name='Distribution')
-    dist_chart = alt.Chart(dist_data).mark_bar().encode(
+    dist_chart = alt.Chart(dist_data).mark_bar(size=20, cornerRadius=5).encode(
         x=alt.X('Year:O', title='Year'),
         y=alt.Y('Distribution:Q', title='Annual Distribution ($)'),
         color=alt.Color('Party:N', scale=alt.Scale(domain=['LP_Distribution', 'GP_Distribution'], range=[color_scheme["blue"], color_scheme["orange"]])),
         tooltip=['Year', 'Party', alt.Tooltip('Distribution:Q', format='$,.0f')]
     ).properties(title="Annual Distributions by Party")
     st.altair_chart(dist_chart, use_container_width=True)
+    
+    # Chart 4: Outstanding Balances
+    balance_data = annual_df.melt(id_vars=['Year'], value_vars=['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding'], var_name='Balance Type', value_name='Amount')
+    balance_chart = alt.Chart(balance_data).mark_line(point=True).encode(
+        x=alt.X('Year:O', title='Year'),
+        y=alt.Y('Amount:Q', title='Outstanding Balance ($)'),
+        color=alt.Color('Balance Type:N', scale=alt.Scale(domain=['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding'], range=[color_scheme["grey"], color_scheme["blue"], color_scheme["orange"]])),
+        tooltip=['Year', 'Balance Type', alt.Tooltip('Amount:Q', format='$,.0f')]
+    ).properties(title="Outstanding Balances Over Time")
+    st.altair_chart(balance_chart, use_container_width=True)
+
 
     st.header("📋 Data Tables")
     with st.expander("View Annual Summary"):
-        display_cols = ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'LP_Contribution', 'GP_Contribution', 'LP_Distribution', 'GP_Distribution', 'Annual_LP_Net_Cash_Flow']
+        display_cols = ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'Unused_Capital', 'LP_Contribution', 'GP_Contribution', 'LP_Distribution', 'GP_Distribution', 'Annual_LP_Net_Cash_Flow']
         st.dataframe(annual_df[['Year'] + display_cols].style.format("{:,.0f}", subset=display_cols))
 
     with st.expander("View Monthly Cash Flows"):
