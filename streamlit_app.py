@@ -262,20 +262,25 @@ try:
 
     st.header("📈 Visualizations")
     
+    # --- Data Aggregation for Charts ---
     monthly_df['Year'] = ((monthly_df.index - 1) // 12) + 1
-    annual_df = monthly_df.groupby('Year').sum()
+    
+    # Define flow and balance columns for correct aggregation
+    flow_cols = ['LP_Contribution', 'GP_Contribution', 'LP_Distribution', 'GP_Distribution']
+    balance_cols = ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'Unused_Capital']
+    
+    annual_flows = monthly_df.groupby('Year')[flow_cols].sum()
+    annual_balances = monthly_df.groupby('Year')[balance_cols].last()
+    
+    annual_df = annual_flows.join(annual_balances)
     annual_df['Annual_LP_Net_Cash_Flow'] = annual_df['LP_Distribution'] - annual_df['LP_Contribution']
-    # Get end-of-year balances by taking the last month's value for each year
-    eoy_balances = monthly_df.groupby('Year')[['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'Unused_Capital']].last()
-    annual_df = annual_df.join(eoy_balances)
     annual_df.reset_index(inplace=True)
 
-    # Prosper NWT Brand Colors
+    # --- Charting ---
     color_scheme = {"blue": "#004E89", "orange": "#FF6700", "grey": "#A0A0A0"}
 
     # Chart 1: Capital Deployment & Dry Powder
     base = alt.Chart(annual_df).encode(x=alt.X('Year:O', title='Year'))
-    
     capital_deployed_data = annual_df.melt(id_vars=['Year'], value_vars=['Equity_Outstanding', 'Debt_Outstanding'], var_name='Capital Type', value_name='Amount')
     
     area = base.mark_area().encode(
@@ -286,7 +291,7 @@ try:
     line = base.mark_line(color=color_scheme["grey"], strokeDash=[5,5]).encode(
         y=alt.Y('Unused_Capital:Q', title='Dry Powder ($)'),
         tooltip=['Year', alt.Tooltip('Unused_Capital:Q', format='$,.0f')]
-    ).properties(title="Capital Deployment & Dry Powder")
+    )
 
     deployment_chart = alt.layer(area, line).resolve_scale(y='independent').properties(title="Capital Deployment & Dry Powder")
     st.altair_chart(deployment_chart, use_container_width=True)
@@ -346,3 +351,4 @@ try:
 except Exception as e:
     st.error(f"An error occurred while running the model: {e}")
     st.code(traceback.format_exc())
+
