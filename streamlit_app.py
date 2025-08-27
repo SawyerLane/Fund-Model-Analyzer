@@ -11,9 +11,9 @@ from fund_model import run_fund_scenario
 
 # --- Page and Helper Functions ---
 
-st.set_page_config(page_title="PE Fund Model", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Fund Model Analyzer", layout="wide", initial_sidebar_state="expanded")
 
-# Inject custom CSS for a cleaner, Notion-like UI
+# Inject custom CSS for a cleaner, Notion-like UI with improved tooltips
 st.markdown("""
 <style>
     /* General body and font */
@@ -44,29 +44,39 @@ st.markdown("""
         border-radius: 8px;
         padding: 1rem;
     }
-    /* Tooltip styling */
+    /* Circled Tooltip styling */
     .tooltip {
         position: relative;
         display: inline-block;
         cursor: pointer;
-        margin-left: 5px;
+        font-family: sans-serif;
+        font-weight: bold;
         color: #A0A0A0;
+        border: 1px solid #A0A0A0;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        text-align: center;
+        line-height: 18px;
+        font-size: 12px;
     }
     .tooltip .tooltiptext {
         visibility: hidden;
-        width: 220px;
+        width: 240px;
         background-color: #555;
         color: #fff;
         text-align: center;
         border-radius: 6px;
-        padding: 5px 0;
+        padding: 8px;
         position: absolute;
         z-index: 1;
-        bottom: 125%;
+        bottom: 150%;
         left: 50%;
-        margin-left: -110px;
+        margin-left: -120px;
         opacity: 0;
         transition: opacity 0.3s;
+        font-size: 12px;
+        font-weight: normal;
     }
     .tooltip:hover .tooltiptext {
         visibility: visible;
@@ -125,68 +135,59 @@ def to_excel(df_monthly: pd.DataFrame, df_annual: pd.DataFrame, summary_data: di
         st.error(f"Error creating Excel file: {e}")
         return None
 
-def st_input_with_tooltip(input_func, label, tooltip, *args, **kwargs):
-    """Creates a Streamlit input widget with a tooltip."""
-    col1, col2 = st.columns([0.9, 0.1])
-    with col1:
-        widget = input_func(label, *args, **kwargs)
-    with col2:
-        st.markdown(f'<div class="tooltip">? <span class="tooltiptext">{tooltip}</span></div>', unsafe_allow_html=True)
-    return widget
-
 # --- Sidebar Configuration ---
 
 st.sidebar.title("⚙️ Fund Configuration")
 
-# --- 📝 Fund Setup ---
-with st.sidebar.expander("📝 Fund Setup", expanded=True):
-    fund_duration_years = st_input_with_tooltip(st.number_input, "Fund Duration (Years)", "Total life of the fund in years.", min_value=1, max_value=50, value=15)
-    investment_period = st_input_with_tooltip(st.number_input, "Investment Period (Years)", "Period during which the fund can make new investments.", min_value=1, max_value=fund_duration_years, value=5)
-    equity_commit = st_input_with_tooltip(st.number_input, "Total Equity Commitment ($)", "Total capital committed by all partners.", min_value=1_000_000, value=30_000_000, step=1_000_000, format="%d")
-    lp_commit = st_input_with_tooltip(st.number_input, "LP Commitment ($)", "Capital committed by Limited Partners.", min_value=1_000_000, value=25_000_000, step=1_000_000, format="%d")
-    gp_commit = st_input_with_tooltip(st.number_input, "GP Commitment ($)", "Capital committed by the General Partner.", min_value=0, value=5_000_000, step=1_000_000, format="%d")
+# --- 📄 Fund Setup ---
+with st.sidebar.expander("📄 Fund Setup", expanded=True):
+    fund_duration_years = st.number_input("Fund Duration (Years)", min_value=1, max_value=50, value=15, help="Total life of the fund in years.")
+    investment_period = st.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5, help="Period during which the fund can make new investments.")
+    equity_commit = st.number_input("Total Equity Commitment ($)", min_value=1_000_000, value=30_000_000, step=1_000_000, format="%d", help="Total capital committed by all partners.")
+    lp_commit = st.number_input("LP Commitment ($)", min_value=1_000_000, value=25_000_000, step=1_000_000, format="%d", help="Capital committed by Limited Partners.")
+    gp_commit = st.number_input("GP Commitment ($)", min_value=0, value=5_000_000, step=1_000_000, format="%d", help="Capital committed by the General Partner.")
 
     if abs((lp_commit + gp_commit) - equity_commit) > 100:
         st.error(f"LP + GP commitments (${lp_commit + gp_commit:,.0f}) must equal total equity (${equity_commit:,.0f}).")
     else:
         st.success("Commitments are balanced.")
 
-# --- 🏗️ Capital Deployment ---
-with st.sidebar.expander("🏗️ Capital Deployment"):
+# --- 💼 Capital Deployment ---
+with st.sidebar.expander("💼 Capital Deployment"):
     st.subheader("Equity Deployment")
     eq_ramp = []
     for year in range(1, investment_period + 1):
         default_value = min(year * equity_commit / investment_period, equity_commit)
-        eq_ramp.append(st_input_with_tooltip(st.number_input, f"Cumulative by Year {year} ($)", f"Total equity expected to be deployed by the end of year {year}.", min_value=0, value=int(default_value), step=1_000_000, format="%d", key=f"eq_ramp_{year}"))
+        eq_ramp.append(st.number_input(f"Cumulative by Year {year} ($)", min_value=0, value=int(default_value), step=1_000_000, format="%d", key=f"eq_ramp_{year}", help=f"Total equity expected to be deployed by the end of year {year}."))
     
     st.subheader("Debt Structure")
-    num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=1)
+    num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=1, help="Number of distinct debt facilities for the fund.")
     debt_tranches_data = []
     for i in range(num_tranches):
         st.markdown(f"**Tranche {i+1}**")
-        amount = st_input_with_tooltip(st.number_input, "Amount ($)", "Principal amount of this debt tranche.", min_value=1_000_000, value=10_000_000, step=1_000_000, format="%d", key=f"d_amt_{i}")
-        annual_rate = st_input_with_tooltip(st.number_input, "Annual Rate (%)", "Annual interest rate for this tranche.", min_value=0.0, max_value=20.0, value=6.0, step=0.1, key=f"d_rate_{i}")
-        interest_type = st_input_with_tooltip(st.selectbox, "Interest Type", "Cash interest is paid monthly; PIK (Payment-in-Kind) interest is added to the principal.", ["Cash", "PIK"], key=f"d_int_type_{i}")
-        drawdown_start = st_input_with_tooltip(st.number_input, "Drawdown Start (Month)", "The month the fund starts drawing down this debt.", min_value=1, value=1, key=f"d_start_{i}")
-        drawdown_end = st_input_with_tooltip(st.number_input, "Drawdown End (Month)", "The month the fund finishes drawing down this debt.", min_value=1, value=24, key=f"d_end_{i}")
-        maturity_month = st_input_with_tooltip(st.number_input, "Maturity (Month)", "The month the debt principal must be repaid.", min_value=1, value=120, key=f"d_maturity_{i}")
+        amount = st.number_input("Amount ($)", min_value=1_000_000, value=10_000_000, step=1_000_000, format="%d", key=f"d_amt_{i}", help="Principal amount of this debt tranche.")
+        annual_rate = st.number_input("Annual Rate (%)", min_value=0.0, max_value=20.0, value=6.0, step=0.1, key=f"d_rate_{i}", help="Annual interest rate for this tranche.")
+        interest_type = st.selectbox("Interest Type", ["Cash", "PIK"], key=f"d_int_type_{i}", help="Cash interest is paid monthly; PIK (Payment-in-Kind) interest is added to the principal.")
+        drawdown_start = st.number_input("Drawdown Start (Month)", min_value=1, value=1, key=f"d_start_{i}", help="The month the fund starts drawing down this debt.")
+        drawdown_end = st.number_input("Drawdown End (Month)", min_value=1, value=24, key=f"d_end_{i}", help="The month the fund finishes drawing down this debt.")
+        maturity_month = st.number_input("Maturity (Month)", min_value=1, value=120, key=f"d_maturity_{i}", help="The month the debt principal must be repaid.")
         debt_tranches_data.append({ "name": f"Tranche {i+1}", "amount": amount, "annual_rate": annual_rate / 100.0, "interest_type": interest_type, "drawdown_start_month": drawdown_start, "drawdown_end_month": drawdown_end, "maturity_month": maturity_month, "repayment_type": "Interest-Only", "amortization_period_years": 30 })
 
-# --- 💰 Economics & Fees ---
-with st.sidebar.expander("💰 Economics & Fees"):
-    asset_yield = st_input_with_tooltip(st.number_input, "Asset Yield (Annual %)", "Annual yield generated by the fund's assets.", min_value=0.0, max_value=50.0, value=9.0, step=0.1) / 100
-    asset_income_type = st_input_with_tooltip(st.selectbox, "Asset Income Type", "How asset yield is realized (Cash or PIK).", ["Cash", "PIK"], index=1)
-    treasury_yield = st_input_with_tooltip(st.number_input, "Treasury Yield (Annual %)", "Yield on uncalled capital, invested in short-term treasuries.", min_value=0.0, max_value=10.0, value=0.0, step=0.1) / 100
+# --- 💵 Economics & Fees ---
+with st.sidebar.expander("💵 Economics & Fees"):
+    asset_yield = st.number_input("Asset Yield (Annual %)", min_value=0.0, max_value=50.0, value=9.0, step=0.1, help="Annual yield generated by the fund's assets.") / 100
+    asset_income_type = st.selectbox("Asset Income Type", ["Cash", "PIK"], index=1, help="How asset yield is realized (Cash or PIK).")
+    treasury_yield = st.number_input("Treasury Yield (Annual %)", min_value=0.0, max_value=10.0, value=0.0, step=0.1, help="Yield on uncalled capital, invested in short-term treasuries.") / 100
     
     st.subheader("Management Fees & Opex")
-    mgmt_fee_basis = st_input_with_tooltip(st.selectbox, "Fee Basis", "The base on which the management fee is calculated.", ["Equity Commitment", "Assets Outstanding"])
+    mgmt_fee_basis = st.selectbox("Fee Basis", ["Equity Commitment", "Assets Outstanding"], help="The base on which the management fee is calculated.")
     waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True, help="If checked, the GP's commitment is excluded from the fee base.")
-    mgmt_early = st_input_with_tooltip(st.number_input, "Fee - Early Period (%)", "Management fee during the investment period.", value=1.75, step=0.1) / 100
-    mgmt_late = st_input_with_tooltip(st.number_input, "Fee - Late Period (%)", "Management fee after the investment period.", value=1.25, step=0.1) / 100
-    opex_annual = st_input_with_tooltip(st.number_input, "Annual Opex ($)", "Annual fixed operating expenses of the fund.", value=1_200_000, step=50_000, format="%d")
+    mgmt_early = st.number_input("Fee - Early Period (%)", value=1.75, step=0.1, help="Management fee during the investment period.") / 100
+    mgmt_late = st.number_input("Fee - Late Period (%)", value=1.25, step=0.1, help="Management fee after the investment period.") / 100
+    opex_annual = st.number_input("Annual Opex ($)", value=1_200_000, step=50_000, format="%d", help="Annual fixed operating expenses of the fund.")
 
-# --- 🌊 Distribution Waterfall ---
-with st.sidebar.expander("🌊 Distribution Waterfall"):
+# --- 💧 Distribution Waterfall ---
+with st.sidebar.expander("💧 Distribution Waterfall"):
     num_tiers = st.number_input("Number of Tiers", min_value=2, max_value=6, value=4, help="The number of hurdles in the distribution waterfall.")
     waterfall_tiers = []
     default_tiers = [
@@ -215,17 +216,17 @@ with st.sidebar.expander("🌊 Distribution Waterfall"):
             gp_split=(100.0 - lp_split_val) / 100.0
         ))
 
-# --- 📊 Scenario Analysis ---
-with st.sidebar.expander("📊 Scenario Analysis", expanded=True):
-    equity_multiple = st_input_with_tooltip(st.slider, "Exit Equity Multiple", "The multiple of invested equity returned at exit.", min_value=0.0, max_value=5.0, value=2.5, step=0.1)
+# --- 🧪 Scenario Analysis ---
+with st.sidebar.expander("🧪 Scenario Analysis", expanded=True):
+    equity_multiple = st.slider("Exit Equity Multiple", min_value=0.0, max_value=5.0, value=2.5, step=0.1, help="The multiple of invested equity returned at exit.")
     exit_years_options = list(range(1, fund_duration_years + 1))
     default_exit_years = [y for y in [fund_duration_years - 1, fund_duration_years] if y in exit_years_options]
-    exit_years = st_input_with_tooltip(st.multiselect, "Exit Years", "The year(s) in which the fund's assets are sold.", options=exit_years_options, default=default_exit_years)
+    exit_years = st.multiselect("Exit Years", options=exit_years_options, default=default_exit_years, help="The year(s) in which the fund's assets are sold.")
 
 
 # --- Main Panel ---
 
-st.title("📈 Private Equity Fund Model")
+st.title("Fund Model Analyzer")
 st.markdown("Configure your fund and scenario in the sidebar. Results will update automatically.")
 
 # --- Live Model Execution & Results ---
@@ -263,36 +264,38 @@ try:
     
     monthly_df['Year'] = ((monthly_df.index - 1) // 12) + 1
     annual_df = monthly_df.groupby('Year').sum()
-    annual_df['Cumulative_LP_Contrib'] = annual_df['LP_Contribution'].cumsum()
-    annual_df['Cumulative_LP_Distrib'] = annual_df['LP_Distribution'].cumsum()
-    annual_df['LP_Net_Cash_Flow'] = annual_df['Cumulative_LP_Distrib'] - annual_df['Cumulative_LP_Contrib']
+    annual_df['Annual_LP_Net_Cash_Flow'] = annual_df['LP_Distribution'] - annual_df['LP_Contribution']
     annual_df.reset_index(inplace=True)
 
-    # Consistent Color Scheme
-    color_scheme = {"LP": "#4A90E2", "GP": "#F5A623", "Net": "#50E3C2"}
+    # Prosper NWT Brand Colors
+    color_scheme = {"blue": "#004E89", "orange": "#FF6700"}
 
-    j_curve_chart = alt.Chart(annual_df).mark_area(
-        line={'color': color_scheme["Net"]},
-        color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='red', offset=0), alt.GradientStop(color='white', offset=0.5), alt.GradientStop(color=color_scheme["Net"], offset=1)], x1=1, x2=1, y1=1, y2=0)
-    ).encode(
+    # Chart 1: LP Net Cash Flow (J-Curve) as a Bar Chart
+    j_curve_chart = alt.Chart(annual_df).mark_bar().encode(
         x=alt.X('Year:O', title='Year'),
-        y=alt.Y('LP_Net_Cash_Flow:Q', title='Cumulative Net Cash Flow ($)'),
-        tooltip=['Year', alt.Tooltip('LP_Net_Cash_Flow:Q', format='$,.0f')]
-    ).properties(title="LP Net Cash Flow (J-Curve)")
+        y=alt.Y('Annual_LP_Net_Cash_Flow:Q', title='Annual Net Cash Flow ($)'),
+        color=alt.condition(
+            alt.datum.Annual_LP_Net_Cash_Flow > 0,
+            alt.value(color_scheme["blue"]),  # Positive bars in blue
+            alt.value(color_scheme["orange"])   # Negative bars in orange
+        ),
+        tooltip=['Year', alt.Tooltip('Annual_LP_Net_Cash_Flow:Q', format='$,.0f')]
+    ).properties(title="LP Annual Net Cash Flow (J-Curve)")
     st.altair_chart(j_curve_chart, use_container_width=True)
 
+    # Chart 2: Annual Distributions
     dist_data = annual_df[['Year', 'LP_Distribution', 'GP_Distribution']].melt('Year', var_name='Party', value_name='Distribution')
     dist_chart = alt.Chart(dist_data).mark_bar().encode(
         x=alt.X('Year:O', title='Year'),
         y=alt.Y('Distribution:Q', title='Annual Distribution ($)'),
-        color=alt.Color('Party:N', scale=alt.Scale(domain=['LP_Distribution', 'GP_Distribution'], range=[color_scheme["LP"], color_scheme["GP"]])),
+        color=alt.Color('Party:N', scale=alt.Scale(domain=['LP_Distribution', 'GP_Distribution'], range=[color_scheme["blue"], color_scheme["orange"]])),
         tooltip=['Year', 'Party', alt.Tooltip('Distribution:Q', format='$,.0f')]
     ).properties(title="Annual Distributions by Party")
     st.altair_chart(dist_chart, use_container_width=True)
 
     st.header("📋 Data Tables")
     with st.expander("View Annual Summary"):
-        display_cols = ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'LP_Contribution', 'GP_Contribution', 'LP_Distribution', 'GP_Distribution', 'LP_Net_Cash_Flow']
+        display_cols = ['Assets_Outstanding', 'Equity_Outstanding', 'Debt_Outstanding', 'LP_Contribution', 'GP_Contribution', 'LP_Distribution', 'GP_Distribution', 'Annual_LP_Net_Cash_Flow']
         st.dataframe(annual_df[['Year'] + display_cols].style.format("{:,.0f}", subset=display_cols))
 
     with st.expander("View Monthly Cash Flows"):
@@ -310,4 +313,3 @@ try:
 except Exception as e:
     st.error(f"An error occurred while running the model: {e}")
     st.code(traceback.format_exc())
-
