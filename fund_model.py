@@ -241,8 +241,16 @@ def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.Da
                 D = 0
                 continue
 
-            target_monthly_irr = monthly_rate_from_annual_irr(tier.until_annual_irr)
-            additional_lp_dist_needed = solve_irr_bisect(np.append(lp_cf[:t+1], [1]), t_index=np.append(mi[:t+1], [mi[t]])) * -1
+            target_monthly_irr = monthly_rate_from_annual_eff(tier.until_annual_irr) # <-- CORRECTED THIS LINE
+            # Simplified IRR calculation for distribution
+            npv_at_target = npv(target_monthly_irr, lp_cf[:t+1], mi[:t+1])
+            if npv_at_target <= 1e-6:
+                continue
+
+            # This is an approximation of the distribution needed. A solver would be more accurate.
+            discount_factor = (1 + target_monthly_irr)**t
+            additional_lp_dist_needed = npv_at_target * discount_factor
+            
             if additional_lp_dist_needed <= 1e-6: continue
             
             total_cash_for_tier = additional_lp_dist_needed / tier.lp_split if tier.lp_split > 1e-10 else np.inf
@@ -283,9 +291,11 @@ def run_fund_scenario(
     first_exit_month = (min(exit_years) - 1) * 12 + 1
     debt_repayment_at_exit = df.loc[first_exit_month, 'Debt_Outstanding'] if first_exit_month in df.index else 0
     
-    net_proceeds_to_equity = df.loc[first_exit_month, 'Equity_Outstanding'] * equity_multiple if first_exit_month in df.index else 0
-    gross_exit_proceeds = net_proceeds_to_equity + debt_repayment_at_exit
-    
+    # Exit proceeds based on total assets, not just equity.
+    assets_at_exit = df.loc[first_exit_month, 'Assets_Outstanding'] if first_exit_month in df.index else 0
+    gross_exit_proceeds = assets_at_exit * equity_multiple
+    net_proceeds_to_equity = gross_exit_proceeds - debt_repayment_at_exit
+
     if len(exit_years) > 0:
         monthly_repayments = pd.Series(0.0, index=df.index)
         monthly_equity_dists = pd.Series(0.0, index=df.index)
@@ -311,7 +321,7 @@ def run_fund_scenario(
         df["Debt_Outstanding"] = df["Debt_Outstanding"].clip(lower=0)
         # At exit, assets are sold, so outstanding assets should become zero
         last_exit_month = max(exit_years) * 12
-        df.loc[last_exit_month:, "Assets_Outstanding"] = 0
+        df.loc[last_exit_month:, ["Assets_Outstanding", "Equity_Outstanding"]] = 0
 
 
     out = allocate_waterfall_monthly(df, wcfg)
