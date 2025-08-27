@@ -702,3 +702,4 @@ def run_fund_scenario(
         print(f"Warning: Large cash flow imbalance detected: ${cash_validation.get('net_operating', 0):,.0f}")
     
     return out, summary
+
