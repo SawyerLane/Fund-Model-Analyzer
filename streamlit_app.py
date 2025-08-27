@@ -114,6 +114,13 @@ with st.sidebar.expander("📄 Fund Setup", expanded=True):
     else:
         st.success("Commitments are balanced.")
 
+# --- 🧪 Scenario Analysis ---
+with st.sidebar.expander("🧪 Scenario Analysis", expanded=True):
+    equity_multiple = st.slider("Exit Equity Multiple", min_value=0.0, max_value=5.0, value=2.5, step=0.1, help="The multiple of invested equity returned at exit.")
+    exit_years_options = list(range(1, fund_duration_years + 1))
+    default_exit_years = [y for y in [fund_duration_years - 1, fund_duration_years] if y in exit_years_options]
+    exit_years = st.multiselect("Exit Years", options=exit_years_options, default=default_exit_years, help="The year(s) in which the fund's assets are sold.")
+
 # --- 💼 Capital Deployment ---
 with st.sidebar.expander("💼 Capital Deployment"):
     st.subheader("Equity Deployment")
@@ -151,6 +158,7 @@ with st.sidebar.expander("💵 Economics & Fees"):
 
 # --- 💧 Distribution Waterfall ---
 with st.sidebar.expander("💧 Distribution Waterfall"):
+    roc_first = st.checkbox("Return Capital First", value=True, help="If checked, all contributed capital is returned pro rata to LPs and GPs before the GP receives promote.")
     num_tiers = st.number_input("Number of Tiers", min_value=2, max_value=6, value=4, help="The number of hurdles in the distribution waterfall.")
     waterfall_tiers = []
     default_tiers = [
@@ -179,13 +187,6 @@ with st.sidebar.expander("💧 Distribution Waterfall"):
             gp_split=(100.0 - lp_split_val) / 100.0
         ))
 
-# --- 🧪 Scenario Analysis ---
-with st.sidebar.expander("🧪 Scenario Analysis", expanded=True):
-    equity_multiple = st.slider("Exit Equity Multiple", min_value=0.0, max_value=5.0, value=2.5, step=0.1, help="The multiple of invested equity returned at exit.")
-    exit_years_options = list(range(1, fund_duration_years + 1))
-    default_exit_years = [y for y in [fund_duration_years - 1, fund_duration_years] if y in exit_years_options]
-    exit_years = st.multiselect("Exit Years", options=exit_years_options, default=default_exit_years, help="The year(s) in which the fund's assets are sold.")
-
 
 # --- Main Panel ---
 
@@ -194,7 +195,7 @@ st.markdown("Configure your fund and scenario in the sidebar. Results will updat
 
 # --- Live Model Execution & Results ---
 try:
-    wcfg = WaterfallConfig(tiers=waterfall_tiers)
+    wcfg = WaterfallConfig(tiers=waterfall_tiers, pref_then_roc_enabled=roc_first)
     cfg = FundConfig(
         fund_duration_years=fund_duration_years, investment_period_years=investment_period,
         equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
@@ -315,3 +316,4 @@ try:
 except Exception as e:
     st.error(f"An error occurred while running the model: {e}")
     st.code(traceback.format_exc())
+

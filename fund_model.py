@@ -114,12 +114,9 @@ def build_cash_flows(cfg: FundConfig) -> pd.DataFrame:
         
         # Capital Deployment
         equity_contribution = eq_out_path[i] - equity_outstanding_bop if i > 0 else eq_out_path[i]
-        debt_contribution = debt_drawdowns[:, i].sum()
         
         # Set EOP (End-of-Period) balances before income/expenses
         df.iat[i, df.columns.get_loc("Equity_Outstanding")] = equity_outstanding_bop + equity_contribution
-        
-        current_debt_outstanding = debt_outstanding_bop + debt_contribution
         
         # Income Calculation
         uncalled_equity = max(0, cfg.equity_commitment - df.iat[i, df.columns.get_loc("Equity_Outstanding")])
@@ -232,16 +229,18 @@ def allocate_waterfall_monthly(df: pd.DataFrame, wcfg: WaterfallConfig) -> pd.Da
         D = float(df.at[mi[t], "Equity_Distributable_BeforeTopoff"])
         if D <= 1e-6: continue
 
-        cum_contrib = df.loc[mi[0]:mi[t], ["LP_Contribution", "GP_Contribution"]].sum().sum()
-        cum_dist = df.loc[mi[0]:mi[t-1] if t > 0 else mi[0], ["LP_Distribution", "GP_Distribution"]].sum().sum()
-        capital_shortfall = cum_contrib - cum_dist
-        
-        if capital_shortfall > 1e-6:
-            roc_dist = min(D, capital_shortfall)
-            lp_roc, gp_roc = roc_dist * lp_pro_rata, roc_dist * gp_pro_rata
-            df.at[mi[t], "LP_Distribution"] += lp_roc; df.at[mi[t], "GP_Distribution"] += gp_roc
-            lp_cf[t] += lp_roc; gp_cf[t] += gp_roc
-            D -= roc_dist
+        if wcfg.pref_then_roc_enabled:
+            cum_contrib = df.loc[mi[0]:mi[t], ["LP_Contribution", "GP_Contribution"]].sum().sum()
+            cum_dist = df.loc[mi[0]:mi[t-1] if t > 0 else mi[0], ["LP_Distribution", "GP_Distribution"]].sum().sum()
+            capital_shortfall = cum_contrib - cum_dist
+            
+            if capital_shortfall > 1e-6:
+                roc_dist = min(D, capital_shortfall)
+                lp_roc = roc_dist * lp_pro_rata
+                gp_roc = roc_dist * gp_pro_rata
+                df.at[mi[t], "LP_Distribution"] += lp_roc; df.at[mi[t], "GP_Distribution"] += gp_roc
+                lp_cf[t] += lp_roc; gp_cf[t] += gp_roc
+                D -= roc_dist
 
         for tier in wcfg.tiers:
             if D <= 1e-6: break
@@ -318,7 +317,11 @@ def run_fund_scenario(
         
         df["Debt_Outstanding"] = df["Debt_Outstanding"].clip(lower=0)
         last_exit_month = max(exit_years) * 12
-        df.loc[last_exit_month:, ["Assets_Outstanding", "Equity_Outstanding"]] = 0
+        if last_exit_month in df.index:
+            # Zero out balances *after* the last month of the exit period
+            months_to_zero = [m for m in df.index if m > last_exit_month]
+            if months_to_zero:
+                df.loc[months_to_zero, ["Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding"]] = 0
 
     out = allocate_waterfall_monthly(df, wcfg)
     
