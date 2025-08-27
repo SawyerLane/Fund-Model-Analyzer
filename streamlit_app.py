@@ -143,9 +143,9 @@ st.sidebar.title("⚙️ Fund Configuration")
 with st.sidebar.expander("📄 Fund Setup", expanded=True):
     fund_duration_years = st.number_input("Fund Duration (Years)", min_value=1, max_value=50, value=15, help="Total life of the fund in years.")
     investment_period = st.number_input("Investment Period (Years)", min_value=1, max_value=fund_duration_years, value=5, help="Period during which the fund can make new investments.")
-    equity_commit = st.number_input("Total Equity Commitment ($)", min_value=1_000_000, value=30_000_000, step=1_000_000, format="%,d", help="Total capital committed by all partners.")
-    lp_commit = st.number_input("LP Commitment ($)", min_value=1_000_000, value=25_000_000, step=1_000_000, format="%,d", help="Capital committed by Limited Partners.")
-    gp_commit = st.number_input("GP Commitment ($)", min_value=0, value=5_000_000, step=1_000_000, format="%,d", help="Capital committed by the General Partner.")
+    equity_commit = st.number_input("Total Equity Commitment ($)", min_value=1_000_000, value=30_000_000, step=1_000_000, help="Total capital committed by all partners.")
+    lp_commit = st.number_input("LP Commitment ($)", min_value=1_000_000, value=25_000_000, step=1_000_000, help="Capital committed by Limited Partners.")
+    gp_commit = st.number_input("GP Commitment ($)", min_value=0, value=5_000_000, step=1_000_000, help="Capital committed by the General Partner.")
 
     if abs((lp_commit + gp_commit) - equity_commit) > 100:
         st.error(f"LP + GP commitments (${lp_commit + gp_commit:,.0f}) must equal total equity (${equity_commit:,.0f}).")
@@ -158,14 +158,14 @@ with st.sidebar.expander("💼 Capital Deployment"):
     eq_ramp = []
     for year in range(1, investment_period + 1):
         default_value = min(year * equity_commit / investment_period, equity_commit)
-        eq_ramp.append(st.number_input(f"Cumulative by Year {year} ($)", min_value=0, value=int(default_value), step=1_000_000, format="%,d", key=f"eq_ramp_{year}", help=f"Total equity expected to be deployed by the end of year {year}."))
+        eq_ramp.append(st.number_input(f"Cumulative by Year {year} ($)", min_value=0, value=int(default_value), step=1_000_000, key=f"eq_ramp_{year}", help=f"Total equity expected to be deployed by the end of year {year}."))
     
     st.subheader("Debt Structure")
     num_tranches = st.number_input("Number of Debt Tranches", min_value=0, max_value=5, value=1, help="Number of distinct debt facilities for the fund.")
     debt_tranches_data = []
     for i in range(num_tranches):
         st.markdown(f"**Tranche {i+1}**")
-        amount = st.number_input("Amount ($)", min_value=1_000_000, value=10_000_000, step=1_000_000, format="%,d", key=f"d_amt_{i}", help="Principal amount of this debt tranche.")
+        amount = st.number_input("Amount ($)", min_value=1_000_000, value=10_000_000, step=1_000_000, key=f"d_amt_{i}", help="Principal amount of this debt tranche.")
         annual_rate = st.number_input("Annual Rate (%)", min_value=0.0, max_value=20.0, value=6.0, step=0.1, key=f"d_rate_{i}", help="Annual interest rate for this tranche.")
         interest_type = st.selectbox("Interest Type", ["Cash", "PIK"], key=f"d_int_type_{i}", help="Cash interest is paid monthly; PIK (Payment-in-Kind) interest is added to the principal.")
         drawdown_start = st.number_input("Drawdown Start (Month)", min_value=1, value=1, key=f"d_start_{i}", help="The month the fund starts drawing down this debt.")
@@ -184,7 +184,7 @@ with st.sidebar.expander("💵 Economics & Fees"):
     waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True, help="If checked, the GP's commitment is excluded from the fee base.")
     mgmt_early = st.number_input("Fee - Early Period (%)", value=1.75, step=0.1, help="Management fee during the investment period.") / 100
     mgmt_late = st.number_input("Fee - Late Period (%)", value=1.25, step=0.1, help="Management fee after the investment period.") / 100
-    opex_annual = st.number_input("Annual Opex ($)", value=1_200_000, step=50_000, format="%,d", help="Annual fixed operating expenses of the fund.")
+    opex_annual = st.number_input("Annual Opex ($)", value=1_200_000, step=50_000, help="Annual fixed operating expenses of the fund.")
 
 # --- 💧 Distribution Waterfall ---
 with st.sidebar.expander("💧 Distribution Waterfall"):
