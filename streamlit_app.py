@@ -71,11 +71,11 @@ st.sidebar.title("⚙️ Fund Configuration")
 
 # 📄 Fund Setup
 with st.sidebar.expander("📄 Fund Setup", expanded=True):
-    fund_duration_years = st.number_input("Fund Duration (Years)", 1, 50, 15, key="fund_duration_years")
-    investment_period = st.number_input("Investment Period (Years)", 1, fund_duration_years, 5, key="investment_period_years")
-    equity_commit = st.number_input("Total Equity Commitment ($)", 1_000_000, None, 30_000_000, 1_000_000, key="equity_commitment")
-    lp_commit = st.number_input("LP Commitment ($)", 1_000_000, None, 25_000_000, 1_000_000, key="lp_commitment")
-    gp_commit = st.number_input("GP Commitment ($)", 0, None, 5_000_000, 1_000_000, key="gp_commitment")
+    fund_duration_years = st.number_input("Fund Duration (Years)", 1, 50, 15, help="Total length of the fund's life from inception to final dissolution.", key="fund_duration_years")
+    investment_period = st.number_input("Investment Period (Years)", 1, fund_duration_years, 5, help="The period during which the fund will make new investments.", key="investment_period_years")
+    equity_commit = st.number_input("Total Equity Commitment ($)", 1_000_000, None, 30_000_000, 1_000_000, help="Total capital committed by all partners (LP and GP).", key="equity_commitment")
+    lp_commit = st.number_input("LP Commitment ($)", 1_000_000, None, 25_000_000, 1_000_000, help="Portion of total equity committed by Limited Partners.", key="lp_commitment")
+    gp_commit = st.number_input("GP Commitment ($)", 0, None, 5_000_000, 1_000_000, help="Portion of total equity committed by the General Partner.", key="gp_commitment")
     if abs((lp_commit + gp_commit) - equity_commit) > 1:
         st.error(f"LP + GP commitments (${lp_commit + gp_commit:,.0f}) must equal total equity (${equity_commit:,.0f}).")
 
@@ -87,7 +87,7 @@ with st.sidebar.expander("💼 Capital Deployment", expanded=False):
     for year in range(1, investment_period + 1):
         default_val = min(year * equity_commit / investment_period, equity_commit)
         val = st.number_input(
-            f"Cumulative by Year {year} ($)", 0, int(equity_commit), int(default_val), 1_000_000, key=f"eq_ramp_{year}"
+            f"Cumulative by Year {year} ($)", 0, int(equity_commit), int(default_val), 1_000_000, help=f"Cumulative equity expected to be deployed by the end of year {year}.", key=f"eq_ramp_{year}"
         )
         if val < last_val:
             st.warning(f"Year {year} deployment should be >= Year {year-1}.")
@@ -97,28 +97,34 @@ with st.sidebar.expander("💼 Capital Deployment", expanded=False):
         st.warning(f"Final year deployment (${eq_ramp[-1]:,.0f}) should equal total commitment (${equity_commit:,.0f}).")
 
     st.subheader("Debt Structure")
-    num_tranches = st.number_input("Number of Debt Tranches", 0, 5, 2, key="num_tranches")
+    num_tranches = st.number_input("Number of Debt Tranches", 0, 5, 2, help="Define multiple debt facilities with different terms.", key="num_tranches")
     debt_tranches_data = []
     for i in range(num_tranches):
         st.markdown(f"**Tranche {i+1}**")
+        name = st.text_input(f"Name {i+1}", f"Tranche {i+1}", help="A unique name for this debt tranche.", key=f"d_name_{i}")
+        amount = st.number_input(f"Amount {i+1} ($)", 1_000_000, None, 10_000_000, 1_000_000, help="Total size of the debt facility.", key=f"d_amt_{i}")
+        annual_rate = st.number_input(f"Annual Rate {i+1} (%)", 0.0, 20.0, 6.0, 0.1, help="The yearly interest rate for this tranche.", key=f"d_rate_{i}")/100.0
+        interest_type = st.selectbox(f"Interest Type {i+1}", ["Cash", "PIK"], help="'Cash' interest is paid monthly. 'PIK' (Payment-In-Kind) interest is accrued to the principal balance.", key=f"d_int_type_{i}")
+        drawdown_start_month = st.number_input(f"Drawdown Start {i+1} (Month)", 1, None, 1, help="The first month the fund can draw capital from this tranche.", key=f"d_start_{i}")
+        drawdown_end_month = st.number_input(f"Drawdown End {i+1} (Month)", 1, None, 24, help="The last month the fund can draw capital from this tranche.", key=f"d_end_{i}")
+        maturity_month = st.number_input(f"Maturity {i+1} (Month)", 1, None, 120, help="The month when all outstanding principal must be repaid.", key=f"d_maturity_{i}")
+        repayment_type = st.selectbox(f"Repayment {i+1}", ["Interest-Only", "Amortizing"], help="'Interest-Only' means only interest is paid until maturity. 'Amortizing' means principal and interest are paid down over a schedule.", key=f"d_repay_{i}")
+        is_amortizing = (repayment_type == "Amortizing")
+        amortization_period_years = st.number_input(f"Amortization Period {i+1} (Years)", 1, 40, 30, help="The period over which the loan principal is scheduled to be amortized. Only active if Repayment is 'Amortizing'.", key=f"d_amort_{i}", disabled=not is_amortizing)
         debt_tranches_data.append({
-            "name": st.text_input(f"Name {i+1}", f"Tranche {i+1}", key=f"d_name_{i}"),
-            "amount": st.number_input(f"Amount {i+1} ($)", 1_000_000, None, 10_000_000, 1_000_000, key=f"d_amt_{i}"),
-            "annual_rate": st.number_input(f"Annual Rate {i+1} (%)", 0.0, 20.0, 6.0, 0.1, key=f"d_rate_{i}")/100.0,
-            "interest_type": st.selectbox(f"Interest Type {i+1}", ["Cash", "PIK"], key=f"d_int_type_{i}"),
-            "drawdown_start_month": st.number_input(f"Drawdown Start {i+1} (Month)", 1, None, 1, key=f"d_start_{i}"),
-            "drawdown_end_month": st.number_input(f"Drawdown End {i+1} (Month)", 1, None, 24, key=f"d_end_{i}"),
-            "maturity_month": st.number_input(f"Maturity {i+1} (Month)", 1, None, 120, key=f"d_maturity_{i}"),
-            "repayment_type": st.selectbox(f"Repayment {i+1}", ["Interest-Only", "Amortizing"], key=f"d_repay_{i}"),
-            "amortization_period_years": st.number_input(f"Amortization Period {i+1} (Years)", 1, 40, 30, key=f"d_amort_{i}"),
+            "name": name, "amount": amount, "annual_rate": annual_rate, "interest_type": interest_type,
+            "drawdown_start_month": drawdown_start_month, "drawdown_end_month": drawdown_end_month,
+            "maturity_month": maturity_month, "repayment_type": repayment_type,
+            "amortization_period_years": amortization_period_years,
         })
+
 
 # 💵 Economics & Fees
 with st.sidebar.expander("💵 Economics & Fees", expanded=False):
-    asset_yield = st.number_input("Asset Yield (Annual %)", 0.0, 50.0, 9.0, 0.1, key="asset_yield") / 100.0
-    asset_income_type = st.selectbox("Asset Income Type", ["Cash", "PIK"], index=1, key="asset_income_type")
-    equity_for_lending_pct = st.slider("Equity Portion for Asset Yield (%)", 0.0, 100.0, 0.0, 1.0, key="equity_for_lending_pct") / 100.0
-    treasury_yield = st.number_input("Treasury Yield (Annual %)", 0.0, 10.0, 0.0, 0.1, key="treasury_yield") / 100.0
+    asset_yield = st.number_input("Asset Yield (Annual %)", 0.0, 50.0, 9.0, 0.1, help="Annual yield generated by the fund's underlying assets.", key="asset_yield") / 100.0
+    asset_income_type = st.selectbox("Asset Income Type", ["Cash", "PIK"], index=0, help="'Cash' income is received monthly. 'PIK' (Payment-In-Kind) income increases the asset value instead of providing cash flow.", key="asset_income_type")
+    equity_for_lending_pct = st.slider("Equity Portion for Asset Yield (%)", 0.0, 100.0, 30.0, 1.0, help="Percentage of deployed equity that is allocated to assets generating the 'Asset Yield'. The remainder is assumed to not generate yield until exit.", key="equity_for_lending_pct") / 100.0
+    treasury_yield = st.number_input("Treasury Yield (Annual %)", 0.0, 10.0, 4.0, 0.1, help="Annual yield earned on uncalled equity capital held in cash/treasuries.", key="treasury_yield") / 100.0
 
     st.subheader("Management Fees & Opex")
     mgmt_fee_basis = st.selectbox(
@@ -126,27 +132,27 @@ with st.sidebar.expander("💵 Economics & Fees", expanded=False):
         ["Equity Commitment", "Total Commitment (Equity + Debt)", "Assets Outstanding"],
         help="The base on which the management fee is calculated.", key="mgmt_fee_basis"
     )
-    waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True, key="waive_mgmt_fee_on_gp")
-    mgmt_early = st.number_input("Fee - Early Period (%)", 0.0, 10.0, 1.75, 0.1, key="mgmt_early") / 100.0
-    mgmt_late = st.number_input("Fee - Late Period (%)", 0.0, 10.0, 1.25, 0.1, key="mgmt_late") / 100.0
-    opex_annual = st.number_input("Annual Opex ($)", 0, None, 1_200_000, 50_000, key="opex_annual")
+    waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True, help="If checked, management fees are not charged on the GP's committed capital.", key="waive_mgmt_fee_on_gp")
+    mgmt_early = st.number_input("Fee - Early Period (%)", 0.0, 10.0, 2.0, 0.05, help="Annual management fee rate during the investment period.", key="mgmt_early") / 100.0
+    mgmt_late = st.number_input("Fee - Late Period (%)", 0.0, 10.0, 1.75, 0.05, help="Annual management fee rate after the investment period.", key="mgmt_late") / 100.0
+    opex_annual = st.number_input("Annual Opex ($)", 0, None, 1_000_000, 50_000, help="Fixed annual operating expenses for the fund.", key="opex_annual")
 
 # 📊 Lending & Leverage
 with st.sidebar.expander("📊 Lending & Leverage", expanded=False):
-    auto_scale_debt_draws = st.checkbox("Auto-scale debt draws to target LTV on lending book", value=True, key="auto_scale_debt_draws")
-    target_ltv = st.slider("Target LTV on lending assets (%)", 0.0, 90.0, 60.0, 1.0, key="target_ltv") / 100.0
+    auto_scale_debt_draws = st.checkbox("Auto-scale debt draws to target LTV on lending book", value=True, help="If checked, the model will automatically draw on available debt tranches to maintain the Target LTV on the lending portion of the portfolio.", key="auto_scale_debt_draws")
+    target_ltv = st.slider("Target LTV on lending assets (%)", 0.0, 90.0, 60.0, 1.0, help="The desired Loan-to-Value ratio for the lending assets. This drives the auto-scaling of debt draws.", key="target_ltv") / 100.0
 
 # 🧭 Exit Scenario
 with st.sidebar.expander("🧭 Exit Scenario", expanded=True):
-    num_exits = st.number_input("Number of Exit Events", 1, 10, 2, key="num_exits")
+    num_exits = st.number_input("Number of Exit Events", 1, 10, 2, help="The number of partial or full sale events for the portfolio.", key="num_exits")
     exit_config_data = []
     total_pct_sold = 0.0
     for i in range(num_exits):
         st.markdown(f"**Exit {i+1}**")
         col1, col2, col3 = st.columns(3)
-        year = col1.number_input("Exit Year", 1, fund_duration_years, fund_duration_years - 1 + i, key=f"exit_year_{i}")
-        pct_sold = col2.number_input("% Sold", 0.0, 100.0, 50.0, 5.0, key=f"exit_pct_{i}") / 100.0
-        multiple = col3.number_input("Multiple", 0.0, 10.0, 2.5, 0.1, key=f"exit_mult_{i}")
+        year = col1.number_input("Exit Year", 1, fund_duration_years, fund_duration_years - 1 + i, help="The year in which the exit event occurs.", key=f"exit_year_{i}")
+        pct_sold = col2.number_input("% Sold", 0.0, 100.0, 50.0, 5.0, help="Percentage of the remaining portfolio sold in this event.", key=f"exit_pct_{i}") / 100.0
+        multiple = col3.number_input("Multiple", 0.0, 10.0, 2.5, 0.1, help="The equity multiple achieved on the portion of the portfolio being sold.", key=f"exit_mult_{i}")
         exit_config_data.append(ExitYearConfig(year=year, pct_of_portfolio_sold=pct_sold, equity_multiple=multiple))
         total_pct_sold += pct_sold
     if abs(total_pct_sold - 1.0) > 0.001:
@@ -154,8 +160,8 @@ with st.sidebar.expander("🧭 Exit Scenario", expanded=True):
 
 # 💧 Distribution Waterfall
 with st.sidebar.expander("💧 Distribution Waterfall", expanded=False):
-    roc_first = st.checkbox("Return Capital First (ROC)", value=True, key="roc_first")
-    num_tiers = st.number_input("Number of Tiers", min_value=2, max_value=6, value=4, key="num_tiers_wf")
+    roc_first = st.checkbox("Return Capital First (ROC)", value=True, help="If checked, all contributed capital is returned to partners before any profit is split.", key="roc_first")
+    num_tiers = st.number_input("Number of Tiers", min_value=2, max_value=6, value=4, help="The number of hurdles in the waterfall.", key="num_tiers_wf")
     waterfall_tiers = []
     default_tiers = [
         {"hurdle": 8.0,  "lp_split": 100.0},
@@ -171,45 +177,32 @@ with st.sidebar.expander("💧 Distribution Waterfall", expanded=False):
         with col1:
             if i == num_tiers - 1:
                 hurdle_val = None
-                st.text_input("IRR Hurdle (%)", "Final Tier", disabled=True, key=f"w_hurdle_{i}")
+                st.text_input("IRR Hurdle (%)", "Final Tier", disabled=True, help="The final tier captures all remaining profit.", key=f"w_hurdle_{i}")
             else:
-                hurdle_val = st.number_input("IRR Hurdle (%)", value=default_hurdle, step=1.0, key=f"w_hurdle_val_{i}")
+                hurdle_val = st.number_input("IRR Hurdle (%)", value=default_hurdle, step=1.0, help="The LP IRR that must be achieved before moving to the next tier.", key=f"w_hurdle_val_{i}")
         with col2:
-            lp_split_val = st.number_input("LP Split (%)", value=default_lp_split, min_value=0.0, max_value=100.0, step=1.0, key=f"w_lp_split_{i}")
+            lp_split_val = st.number_input("LP Split (%)", value=default_lp_split, min_value=0.0, max_value=100.0, step=1.0, help="The percentage of profit allocated to LPs in this tier.", key=f"w_lp_split_{i}")
         waterfall_tiers.append(WaterfallTier(
             until_annual_irr=None if hurdle_val is None else hurdle_val / 100.0,
             lp_split=lp_split_val / 100.0,
             gp_split=(100.0 - lp_split_val) / 100.0,
         ))
 
-# --- Main Panel ---
-st.title("Fund Model Analyzer")
-
-# Buttons to export/import JSON of parameters
-with st.expander("💾 Save / Load Scenario", expanded=False):
-    # Build configs (temporary) for serialization, actual run happens later (with possible override)
+# 💾 Save / Load Scenario
+with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
+    # Prepare configs for serialization
     wcfg_preview = WaterfallConfig(tiers=waterfall_tiers, pref_then_roc_enabled=roc_first)
     cfg_preview = FundConfig(
-        fund_duration_years=fund_duration_years,
-        investment_period_years=investment_period,
-        equity_commitment=equity_commit,
-        lp_commitment=lp_commit,
-        gp_commitment=gp_commit,
+        fund_duration_years=fund_duration_years, investment_period_years=investment_period,
+        equity_commitment=equity_commit, lp_commitment=lp_commit, gp_commitment=gp_commit,
         debt_tranches=[DebtTrancheConfig(**d) for d in debt_tranches_data],
-        asset_yield_annual=asset_yield,
-        asset_income_type=asset_income_type,
-        equity_for_lending_pct=equity_for_lending_pct,
-        treasury_yield_annual=treasury_yield,
-        mgmt_fee_basis=mgmt_fee_basis,
-        waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp,
-        mgmt_fee_annual_early=mgmt_early,
-        mgmt_fee_annual_late=mgmt_late,
-        opex_annual_fixed=opex_annual,
-        eq_ramp_by_year=eq_ramp,
-        auto_scale_debt_draws=auto_scale_debt_draws,
-        target_ltv_on_lending=target_ltv,
+        asset_yield_annual=asset_yield, asset_income_type=asset_income_type,
+        equity_for_lending_pct=equity_for_lending_pct, treasury_yield_annual=treasury_yield,
+        mgmt_fee_basis=mgmt_fee_basis, waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp,
+        mgmt_fee_annual_early=mgmt_early, mgmt_fee_annual_late=mgmt_late,
+        opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp,
+        auto_scale_debt_draws=auto_scale_debt_draws, target_ltv_on_lending=target_ltv,
     )
-
     payload = {
         "fund_config": asdict(cfg_preview),
         "waterfall": {"pref_then_roc_enabled": wcfg_preview.pref_then_roc_enabled, "tiers": [asdict(t) for t in wcfg_preview.tiers]},
@@ -217,25 +210,28 @@ with st.expander("💾 Save / Load Scenario", expanded=False):
         "version": "1.0.0",
     }
     json_bytes = json.dumps(payload, indent=2).encode("utf-8")
-    st.download_button("⬇️ Download JSON of current parameters", json_bytes, file_name="fund_model_params.json")
 
-    uploaded = st.file_uploader("Upload JSON parameters", type=["json"], key="json_upload")
+    uploaded = st.file_uploader("Upload JSON parameters", type=["json"], help="Load a previously saved scenario file to override the current settings.", key="json_upload")
+    st.download_button("⬇️ Download JSON of current parameters", json_bytes, file_name="fund_model_params.json", help="Save the current set of all parameters to a JSON file.")
+    
     loaded_cfg = loaded_wcfg = loaded_exits = None
     if uploaded is not None:
         try:
             pay = json.loads(uploaded.read())
-            fc = pay.get("fund_config", {})
-            wf = pay.get("waterfall", {})
-            ex = pay.get("exits", [])
+            fc, wf, ex = pay.get("fund_config", {}), pay.get("waterfall", {}), pay.get("exits", [])
             loaded_cfg = FundConfig(**fc)
             loaded_wcfg = WaterfallConfig(
                 pref_then_roc_enabled=wf.get("pref_then_roc_enabled", True),
                 tiers=[WaterfallTier(**t) for t in wf.get("tiers", [])]
             )
             loaded_exits = [ExitYearConfig(**e) for e in ex]
-            st.success("Parameters loaded — will be used to run the model below (widgets not overwritten).")
+            st.success("Parameters loaded — they will be used to run the model.")
         except Exception as e:
             st.error(f"Failed to load JSON: {e}")
+
+
+# --- Main Panel ---
+st.title("Fund Model Analyzer")
 
 try:
     # Build configs from UI; overridden by uploaded JSON if present
@@ -264,6 +260,7 @@ try:
     # Override with loaded JSON if provided
     if 'loaded_cfg' in locals() and loaded_cfg is not None:
         cfg = loaded_cfg
+        st.info("Note: Displayed results are based on the loaded JSON file, not the sidebar widgets.")
     if 'loaded_wcfg' in locals() and loaded_wcfg is not None:
         wcfg = loaded_wcfg
     if 'loaded_exits' in locals() and loaded_exits is not None:
