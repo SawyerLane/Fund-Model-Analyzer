@@ -87,7 +87,7 @@ try:
         debt_tranches=[DebtTrancheConfig(**d) for d in debt_tranches_data],
         asset_yield_annual=asset_yield, asset_income_type=asset_income_type, equity_for_lending_pct=equity_for_lending_pct,
         treasury_yield_annual=treasury_yield, mgmt_fee_basis=mgmt_fee_basis, waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp,
-        mgmt_fee_annual_early=mgmt_early, mg_fee_annual_late=mgmt_late, opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp
+        mgmt_fee_annual_early=mgmt_early, mgmt_fee_annual_late=mgmt_late, opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp
     )
     wcfg = WaterfallConfig(
         return_capital_first=return_capital_first, preferred_return_rate=pref_rate, gp_final_split=gp_carry
