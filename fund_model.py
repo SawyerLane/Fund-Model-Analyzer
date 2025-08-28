@@ -34,7 +34,7 @@ def monthly_to_annual_irr(mr: float) -> float:
     if mr is None or np.isnan(mr): return np.nan
     return (1.0 + mr) ** 12 - 1.0
 
-# --- Model ---
+# --- Model Class ---
 class FundModel:
     def __init__(self, cfg: FundConfig, wcfg: WaterfallConfig):
         self.cfg = cfg
@@ -124,20 +124,18 @@ class FundModel:
         lp_pro_rata = self.cfg.lp_commitment / max(self.cfg.equity_commitment, 1e-9)
         gp_pro_rata = 1.0 - lp_pro_rata
         
-        # --- State trackers for the waterfall ---
         capital_outstanding = 0.0
         pref_outstanding = 0.0
         monthly_pref_rate = monthly_rate_from_annual_compound(wcfg.preferred_return_rate)
 
-        def pay_capital(D):
-            dist = min(D, capital_outstanding)
+        def pay_capital(D, cap_out):
+            dist = min(D, cap_out)
             df.loc[m, "LP_Distribution"] += dist * lp_pro_rata
             df.loc[m, "GP_Distribution"] += dist * gp_pro_rata
-            return dist # Return amount distributed in this tier
+            return dist
         
-        def pay_pref(D):
-            # Per industry standard, preferred return is typically only paid to LPs
-            lp_pref_due = pref_outstanding * lp_pro_rata
+        def pay_pref(D, pref_out):
+            lp_pref_due = pref_out * lp_pro_rata
             dist = min(D, lp_pref_due)
             df.loc[m, "LP_Distribution"] += dist
             return dist
@@ -153,24 +151,27 @@ class FundModel:
             df.loc[m, "GP_Distribution"] += dist_to_partners * gp_pro_rata + dist_to_gp_carry
             return D
 
-        # --- Main Waterfall Loop ---
         for m in self.mi:
-            # Accrue preferred return on opening capital balance
             capital_outstanding += (df.loc[m, "LP_Contribution"] + df.loc[m, "GP_Contribution"])
             pref_outstanding += capital_outstanding * monthly_pref_rate
             
             D = distributable.loc[m]
             if D < 1e-9: continue
             
-            # Dynamically set the payment order based on user input
             cascade = [pay_capital, pay_pref, pay_final_split] if wcfg.return_capital_first else [pay_pref, pay_capital, pay_final_split]
 
             for payment_tier in cascade:
-                dist_in_tier = payment_tier(D)
-                
-                # Update state trackers based on what was paid
-                if payment_tier == pay_capital: capital_outstanding -= dist_in_tier
-                elif payment_tier == pay_pref: pref_outstanding -= dist_in_tier / lp_pro_rata # Reduce overall pref pot
+                dist_in_tier = 0
+                if payment_tier == pay_capital:
+                    dist_in_tier = pay_capital(D, capital_outstanding)
+                    capital_outstanding -= dist_in_tier
+                elif payment_tier == pay_pref:
+                    dist_in_tier = pay_pref(D, pref_outstanding)
+                    # Reduce overall pref pot by what was paid, scaled by LP's share
+                    if lp_pro_rata > 1e-9:
+                        pref_outstanding -= dist_in_tier / lp_pro_rata
+                elif payment_tier == pay_final_split:
+                    dist_in_tier = pay_final_split(D)
 
                 D -= dist_in_tier
                 if D < 1e-9: break
@@ -196,3 +197,10 @@ class FundModel:
             "Total_GP_Profit": gp_total_dist - gp_total_contrib,
             "Total_Mgmt_Fees": self.df["Mgmt_Fees"].sum(),
         })
+
+# --- Main function to be called by the UI ---
+def run_fund_scenario(cfg: FundConfig, wcfg: WaterfallConfig, exit_config: List[ExitYearConfig]) -> Tuple[pd.DataFrame, Dict]:
+    if not exit_config: raise ValueError("Must specify at least one exit year configuration.")
+    model = FundModel(cfg, wcfg)
+    model.run(exit_config)
+    return model.df, model.summary
