@@ -85,9 +85,10 @@ class FundModel:
         cum_principal_drawn = np.zeros(n_tr)
 
         cols = [
-            "Assets_Outstanding","Equity_Outstanding","Debt_Outstanding",
-            "Asset_Interest_Income","Treasury_Income","Mgmt_Fees","Opex",
-            "Debt_Interest","Debt_Principal_Repay","LP_Contribution","GP_Contribution","Cash_Balance"
+            "Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding",
+            "Contributed_Capital", # New column to track only cash contributions
+            "Asset_Interest_Income", "Treasury_Income", "Mgmt_Fees", "Opex",
+            "Debt_Interest", "Debt_Principal_Repay", "LP_Contribution", "GP_Contribution", "Cash_Balance"
         ]
         self.df = pd.DataFrame(0.0, index=self.mi, columns=cols)
         tranche_balances = np.zeros((n_tr, self.months))
@@ -100,19 +101,20 @@ class FundModel:
             prev_i = i - 1
             bop = self.df.iloc[prev_i].to_dict() if i > 0 else {c: 0.0 for c in self.df.columns}
 
-            # Equity contribution to meet ramp
-            target_equity = eq_out_path[i]
-            equity_contribution = max(0, target_equity - bop["Equity_Outstanding"])
-            equity_out_contrib_only = bop["Equity_Outstanding"] + equity_contribution
+            # Equity contribution based on actual cash contributed, not total equity value
+            target_equity_contrib = eq_out_path[i]
+            equity_contribution = max(0, target_equity_contrib - bop["Contributed_Capital"])
+            eop_contributed_capital = bop["Contributed_Capital"] + equity_contribution
 
-            # Uncalled equity -> Treasury income
-            uncalled_equity = max(0, cfg.equity_commitment - equity_out_contrib_only)
+            # Uncalled equity & Treasury income are based on cash commitments
+            uncalled_equity = max(0, cfg.equity_commitment - eop_contributed_capital)
             treasury_income = uncalled_equity * r_tsy_m
 
             # --- Auto-scale debt draws to target LTV on lending book ---
             scheduled_draws = np.array([planned_draws[t, i] for t in range(n_tr)])
-
-            lending_equity = equity_out_contrib_only * cfg.equity_for_lending_pct
+            
+            # Lending equity is based on cash contributed
+            lending_equity = eop_contributed_capital * cfg.equity_for_lending_pct
             desired_debt_total = 0.0
             if cfg.auto_scale_debt_draws and lending_equity > 1e-9 and cfg.target_ltv_on_lending > 0:
                 desired_debt_total = (cfg.target_ltv_on_lending / (1.0 - cfg.target_ltv_on_lending)) * lending_equity
@@ -179,7 +181,6 @@ class FundModel:
                 else:
                     current_balance += interest  # PIK capitalized
 
-                # Amortization only for Cash-interest tranches
                 if tr.repayment_type == "Amortizing" and tr.interest_type == "Cash":
                     amort_start = tr.drawdown_end_month + 1
                     if m >= amort_start and m < tr.maturity_month and current_balance > 1e-9:
@@ -193,7 +194,6 @@ class FundModel:
                         current_balance -= principal_pay
                         principal_repaid += principal_pay
 
-                # Balloon at maturity
                 if m == tr.maturity_month and current_balance > 1e-9:
                     principal_repaid += current_balance
                     current_balance = 0.0
@@ -203,8 +203,7 @@ class FundModel:
             debt_out = tranche_balances[:, i].sum()
 
             # Income base per lending allocation
-            lending_equity_base = equity_out_contrib_only * cfg.equity_for_lending_pct
-            lending_base = min(equity_out_contrib_only + debt_out, lending_equity_base + debt_out)
+            lending_base = min(eop_contributed_capital + debt_out, lending_equity + debt_out)
             income_base = min(bop["Assets_Outstanding"], lending_base) * self.portfolio_pct_active[i]
 
             asset_interest = max(0.0, income_base) * r_asset_m
@@ -216,17 +215,16 @@ class FundModel:
 
             eop_cash_balance = bop["Cash_Balance"] + oper_cash_flow - principal_repaid
 
-            # --- BUG FIX: Enforce Balance Sheet Identity ---
-            # 1. Final Equity includes contributions and PIK income (a form of retained earnings).
-            # bop['Equity_Outstanding'] already contains prior PIK, so we just add this month's contribution and PIK.
-            equity_out = bop["Equity_Outstanding"] + equity_contribution + asset_pik_accrual
+            # --- CORRECTED ACCOUNTING LOGIC ---
+            # 1. Total Equity Value = Prior Value + Cash Contributions + PIK Income.
+            eop_equity_value = bop["Equity_Outstanding"] + equity_contribution + asset_pik_accrual
             
-            # 2. Assets Outstanding is derived from the accounting equation: Assets = Equity + Debt - Cash
-            # This ensures cash generated/used by operations is reflected as a change in deployed assets.
-            assets_out = equity_out + debt_out - eop_cash_balance
+            # 2. Deployed Assets = Total Equity + Debt - Cash. This enforces the balance sheet.
+            assets_out = eop_equity_value + debt_out - eop_cash_balance
             
             # Write state
-            self.df.iat[i, self.df.columns.get_loc("Equity_Outstanding")] = equity_out
+            self.df.iat[i, self.df.columns.get_loc("Contributed_Capital")] = eop_contributed_capital
+            self.df.iat[i, self.df.columns.get_loc("Equity_Outstanding")] = eop_equity_value
             self.df.iat[i, self.df.columns.get_loc("Debt_Outstanding")] = debt_out
             self.df.iat[i, self.df.columns.get_loc("Assets_Outstanding")] = assets_out
             self.df.iat[i, self.df.columns.get_loc("Asset_Interest_Income")] = asset_interest
@@ -237,12 +235,13 @@ class FundModel:
             self.df.iat[i, self.df.columns.get_loc("Debt_Principal_Repay")] = principal_repaid
             self.df.iat[i, self.df.columns.get_loc("Cash_Balance")] = eop_cash_balance
 
-        # Split LP/GP contributions
+        # Split LP/GP contributions based on actual cash contributed
         equity_commitment_safe = max(cfg.equity_commitment, 1e-9)
         lp_ratio = cfg.lp_commitment / equity_commitment_safe
         gp_ratio = cfg.gp_commitment / equity_commitment_safe
-        # Contributions are based on the change in the contribution-only equity portion
-        contributions = self.df["Equity_Outstanding"].diff().fillna(self.df["Equity_Outstanding"]).clip(lower=0)
+        
+        # CORRECTED: Contributions are the monthly change in Contributed_Capital, not Equity_Outstanding
+        contributions = self.df["Contributed_Capital"].diff().fillna(self.df["Contributed_Capital"]).clip(lower=0)
         self.df["LP_Contribution"] = contributions * lp_ratio
         self.df["GP_Contribution"] = contributions * gp_ratio
 
@@ -293,7 +292,7 @@ class FundModel:
 
         last_exit_month = max(e.year for e in exit_config) * 12
         if last_exit_month < self.months:
-            self.df.loc[last_exit_month + 1:, ["Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding"]] = 0.0
+            self.df.loc[last_exit_month + 1:, ["Assets_Outstanding", "Equity_Outstanding", "Debt_Outstanding", "Contributed_Capital"]] = 0.0
 
     def _allocate_waterfall(self):
         distributable = self.df["Cash_Balance"].clip(lower=0).copy()
@@ -315,12 +314,19 @@ class FundModel:
                 temp[current_month_idx] += dist
                 irr_m = solve_irr_bisect(temp)
                 if np.isnan(irr_m):
-                    return -1.0
+                    # If IRR is nan, it could be very negative. Return a large negative number
+                    # to guide the solver. Objective is (actual_irr - target_irr).
+                    return -1e12 
                 return monthly_to_annual_irr(irr_m) - target_annual_irr
             if objective(0) >= 0:
                 return 0.0
             try:
-                return brentq(objective, 1e-6, 1e12, xtol=1e-6)
+                # If objective(high_bound) is still negative, it means we need even more cash
+                # but we'll cap it at the high bound for stability.
+                high_bound = 1e12
+                if objective(high_bound) < 0:
+                    return np.inf # Can't reach the IRR even with massive distribution
+                return brentq(objective, 1e-6, high_bound, xtol=1e-6)
             except (RuntimeError, ValueError):
                 return np.inf
 
@@ -353,9 +359,19 @@ class FundModel:
                 else:
                     hist_lp = lp_cf[:t_idx + 1].copy()
                     lp_needed = get_dist_to_hit_irr(hist_lp, tier.until_annual_irr, t_idx)
-                    total_for_tier = lp_needed / tier.lp_split if tier.lp_split > 1e-9 else np.inf
-                    cash_this_tier = min(D, total_for_tier)
+                    
+                    if np.isinf(lp_needed):
+                        # Cannot hit the hurdle, so no cash for this tier or subsequent tiers
+                        cash_this_tier = 0.0
+                    elif tier.lp_split < 1e-9:
+                        # Should not happen with validation, but as a safeguard
+                        cash_this_tier = 0.0
+                    else:
+                        total_for_tier = lp_needed / tier.lp_split
+                        cash_this_tier = min(D, total_for_tier)
+
                     lp_take, gp_take = cash_this_tier * tier.lp_split, cash_this_tier * tier.gp_split
+
                 self.df.loc[month, "LP_Distribution"] += lp_take
                 self.df.loc[month, "GP_Distribution"] += gp_take
                 lp_cf[t_idx] += lp_take
