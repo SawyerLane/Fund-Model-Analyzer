@@ -103,16 +103,16 @@ class FundModel:
             # Equity contribution to meet ramp
             target_equity = eq_out_path[i]
             equity_contribution = max(0, target_equity - bop["Equity_Outstanding"])
-            equity_out = bop["Equity_Outstanding"] + equity_contribution
+            equity_out_contrib_only = bop["Equity_Outstanding"] + equity_contribution
 
             # Uncalled equity -> Treasury income
-            uncalled_equity = max(0, cfg.equity_commitment - equity_out)
+            uncalled_equity = max(0, cfg.equity_commitment - equity_out_contrib_only)
             treasury_income = uncalled_equity * r_tsy_m
 
             # --- Auto-scale debt draws to target LTV on lending book ---
             scheduled_draws = np.array([planned_draws[t, i] for t in range(n_tr)])
 
-            lending_equity = equity_out * cfg.equity_for_lending_pct
+            lending_equity = equity_out_contrib_only * cfg.equity_for_lending_pct
             desired_debt_total = 0.0
             if cfg.auto_scale_debt_draws and lending_equity > 1e-9 and cfg.target_ltv_on_lending > 0:
                 desired_debt_total = (cfg.target_ltv_on_lending / (1.0 - cfg.target_ltv_on_lending)) * lending_equity
@@ -203,8 +203,8 @@ class FundModel:
             debt_out = tranche_balances[:, i].sum()
 
             # Income base per lending allocation
-            lending_equity_base = equity_out * cfg.equity_for_lending_pct
-            lending_base = min(equity_out + debt_out, lending_equity_base + debt_out)
+            lending_equity_base = equity_out_contrib_only * cfg.equity_for_lending_pct
+            lending_base = min(equity_out_contrib_only + debt_out, lending_equity_base + debt_out)
             income_base = min(bop["Assets_Outstanding"], lending_base) * self.portfolio_pct_active[i]
 
             asset_interest = max(0.0, income_base) * r_asset_m
@@ -216,10 +216,19 @@ class FundModel:
 
             eop_cash_balance = bop["Cash_Balance"] + oper_cash_flow - principal_repaid
 
+            # --- BUG FIX: Enforce Balance Sheet Identity ---
+            # 1. Final Equity includes contributions and PIK income (a form of retained earnings).
+            # bop['Equity_Outstanding'] already contains prior PIK, so we just add this month's contribution and PIK.
+            equity_out = bop["Equity_Outstanding"] + equity_contribution + asset_pik_accrual
+            
+            # 2. Assets Outstanding is derived from the accounting equation: Assets = Equity + Debt - Cash
+            # This ensures cash generated/used by operations is reflected as a change in deployed assets.
+            assets_out = equity_out + debt_out - eop_cash_balance
+            
             # Write state
             self.df.iat[i, self.df.columns.get_loc("Equity_Outstanding")] = equity_out
             self.df.iat[i, self.df.columns.get_loc("Debt_Outstanding")] = debt_out
-            self.df.iat[i, self.df.columns.get_loc("Assets_Outstanding")] = equity_out + debt_out + asset_pik_accrual
+            self.df.iat[i, self.df.columns.get_loc("Assets_Outstanding")] = assets_out
             self.df.iat[i, self.df.columns.get_loc("Asset_Interest_Income")] = asset_interest
             self.df.iat[i, self.df.columns.get_loc("Treasury_Income")] = treasury_income
             self.df.iat[i, self.df.columns.get_loc("Mgmt_Fees")] = mgmt_fees
@@ -232,6 +241,7 @@ class FundModel:
         equity_commitment_safe = max(cfg.equity_commitment, 1e-9)
         lp_ratio = cfg.lp_commitment / equity_commitment_safe
         gp_ratio = cfg.gp_commitment / equity_commitment_safe
+        # Contributions are based on the change in the contribution-only equity portion
         contributions = self.df["Equity_Outstanding"].diff().fillna(self.df["Equity_Outstanding"]).clip(lower=0)
         self.df["LP_Contribution"] = contributions * lp_ratio
         self.df["GP_Contribution"] = contributions * gp_ratio
