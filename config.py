@@ -1,4 +1,4 @@
-# config.py
+# config.py - UPDATED VERSION
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal
 
@@ -44,15 +44,37 @@ class FundConfig:
     lp_commitment: float = 25_000_000.0
     gp_commitment: float = 5_000_000.0
     debt_tranches: List[DebtTrancheConfig] = field(default_factory=list)
-    asset_yield_annual: float = 0.09
-    asset_income_type: Literal["Cash", "PIK"] = "PIK"
-    equity_for_lending_pct: float = 0.0
+    
+    # LENDING OPERATIONS
+    lending_yield_annual: float = 0.09  # Rate we lend out at (earning spread over debt cost)
+    lending_income_type: Literal["Cash", "PIK"] = "PIK"
+    equity_for_lending_pct: float = 0.0  # % of equity allocated to lending operations
+    
+    # INVESTMENT OPERATIONS  
+    # (Investment returns come from exit multiples, not ongoing yield)
+    
+    # OTHER INCOME
     treasury_yield_annual: float = 0.0
+    
+    # MANAGEMENT & FEES
     mgmt_fee_basis: Literal["Equity Commitment", "Total Commitment (Equity + Debt)", "Assets Outstanding"] = "Equity Commitment"
     waive_mgmt_fee_on_gp: bool = True
     mgmt_fee_annual_early: float = 0.0175
     mgmt_fee_annual_late: float = 0.0125
     opex_annual_fixed: float = 1_200_000.0
+    
+    # DEPLOYMENT SCHEDULE
     eq_ramp_by_year: List[float] = field(default_factory=lambda: [6e6, 12e6, 18e6, 24e6, 30e6])
+    
+    # DEPRECATED - keeping for backward compatibility
+    asset_yield_annual: float = 0.09  # Now maps to lending_yield_annual
+    asset_income_type: Literal["Cash", "PIK"] = "PIK"  # Now maps to lending_income_type
     auto_scale_debt_draws: bool = False
     target_ltv_on_lending: float = 0.60
+    
+    def __post_init__(self):
+        # Map old parameter names to new ones for backward compatibility
+        if hasattr(self, 'asset_yield_annual'):
+            self.lending_yield_annual = self.asset_yield_annual
+        if hasattr(self, 'asset_income_type'):
+            self.lending_income_type = self.asset_income_type
