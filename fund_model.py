@@ -87,15 +87,13 @@ class FundModel:
                 "Lending_Interest_Income", "Investment_Income",
                 "Cash_Inflows", "Cash_Outflows", "Net_Cash_Flow", "Cash_Balance",
                 "Total_Distributions", "LP_Distribution", "GP_Distribution",
-                "Debt_Draws", "Debt_Interest_Expense", "Debt_Principal_Repay"]
+                "Debt_Draws", "Debt_Interest_Expense", "Debt_Principal_Repay",
+                "Debt_Outstanding", "Net_Lending_Income"]
         self.df = pd.DataFrame(0.0, index=self.mi, columns=cols)
         
         # Calculate monthly rates
-        r_lending_m = monthly_rate_from_annual_simple(cfg.asset_yield_annual)
+        r_lending_m = monthly_rate_from_annual_simple(cfg.lending_yield_annual)
         r_tsy_m = monthly_rate_from_annual_simple(cfg.treasury_yield_annual)
-        
-        # Track investment portfolio activity
-        investment_portfolio_remaining = 1.0  # Fraction of investments still active
         
         # Track LP ratio
         lp_ratio = cfg.lp_commitment / max(cfg.equity_commitment, 1e-9)
@@ -161,45 +159,54 @@ class FundModel:
             total_debt_outstanding = sum(tranche_balances.values())
 
             # 3. ASSET ALLOCATION & INCOME CALCULATION
-            # Start with previous period assets + new equity contributions
-            total_equity = bop["Lending_Assets"] + bop["Investment_Assets"] + equity_contribution
+            # Start with previous period assets
+            lending_assets_bop = bop["Lending_Assets"]
+            investment_assets_bop = bop["Investment_Assets"]
             
-            # Allocate equity between lending and investments
-            equity_for_lending = total_equity * cfg.equity_for_lending_pct
-            equity_for_investments = total_equity * (1.0 - cfg.equity_for_lending_pct)
+            # Add new equity contributions to the appropriate pools
+            new_equity_for_lending = equity_contribution * cfg.equity_for_lending_pct
+            new_equity_for_investments = equity_contribution * (1.0 - cfg.equity_for_lending_pct)
+            
+            lending_assets = lending_assets_bop + new_equity_for_lending
+            investment_assets = investment_assets_bop + new_equity_for_investments
             
             # LENDING OPERATIONS
-            # Total lending capital = equity allocated to lending + debt
-            total_lending_capital = equity_for_lending + total_debt_outstanding
+            # Only the equity portion earns the spread; debt just passes through
+            lending_interest_income = 0.0
+            net_lending_income = 0.0
             
-            # Lending income (spread earned on total lending capital)
-            lending_interest_income = total_lending_capital * r_lending_m
+            if lending_assets > 0:
+                # Total capital available for lending = equity allocated to lending + debt
+                total_lending_capital = lending_assets + total_debt_outstanding
+                
+                # Gross interest earned on all loans made
+                gross_lending_income = total_lending_capital * r_lending_m
+                
+                # Net income = gross income - debt interest cost
+                # This is the actual profit from the lending spread
+                net_lending_income = gross_lending_income - debt_interest_month
+                
+                # For reporting: show gross lending income
+                lending_interest_income = gross_lending_income
+                
+                # If PIK, compound the net income into lending assets
+                if cfg.lending_income_type == "PIK":
+                    lending_assets += net_lending_income
             
-            # Net lending income after paying debt costs
-            net_lending_income = max(0.0, lending_interest_income - debt_interest_month)
-            
-            # Update lending assets with net income (if PIK)
-            if cfg.asset_income_type == "PIK":
-                equity_for_lending += net_lending_income
-            
-            # INVESTMENT OPERATIONS
-            # Investment assets earn no ongoing income - only exit multiples
-            # They maintain their book value until exit
-            
-            # 4. EXIT EVENTS
+            # 4. EXIT EVENTS (Investment Portfolio)
             exit_proceeds_cash = 0.0
+            investment_income = 0.0
+            
             if m in exits_by_month:
                 exit_event = exits_by_month[m]
                 
                 # Calculate exit proceeds from investment portion
-                investment_book_value_sold = equity_for_investments * exit_event.pct_of_portfolio_sold
+                investment_book_value_sold = investment_assets * exit_event.pct_of_portfolio_sold
                 exit_proceeds_cash = investment_book_value_sold * exit_event.equity_multiple
+                investment_income = exit_proceeds_cash - investment_book_value_sold  # Gain/loss
                 
                 # Remove sold assets from investment portfolio
-                equity_for_investments -= investment_book_value_sold
-                
-                # Reduce remaining investment activity
-                investment_portfolio_remaining = max(0.0, investment_portfolio_remaining - exit_event.pct_of_portfolio_sold)
+                investment_assets -= investment_book_value_sold
                 
                 self.summary.setdefault("Gross_Exit_Proceeds", 0.0)
                 self.summary["Gross_Exit_Proceeds"] += exit_proceeds_cash
@@ -209,9 +216,15 @@ class FundModel:
             treasury_income = uncalled_equity * r_tsy_m if cfg.treasury_yield_annual > 0 else 0.0
             
             fee_rate = cfg.mgmt_fee_annual_early if m <= months_in_ip else cfg.mgmt_fee_annual_late
-            fee_base = bop["Contributed_Capital"]
+            
+            # Determine fee base
             if cfg.mgmt_fee_basis == "Assets Outstanding":
-                fee_base = bop["Assets_Outstanding"]
+                fee_base = lending_assets + investment_assets
+            elif cfg.mgmt_fee_basis == "Total Commitment (Equity + Debt)":
+                total_debt_commitment = sum(t.amount for t in self.debt_tranches)
+                fee_base = cfg.equity_commitment + total_debt_commitment
+            else:  # Equity Commitment
+                fee_base = bop["Contributed_Capital"]
             
             if cfg.waive_mgmt_fee_on_gp:
                 gp_contributed_to_date = bop["Contributed_Capital"] * (1 - lp_ratio)
@@ -225,8 +238,8 @@ class FundModel:
                 equity_contribution +  # Capital calls
                 debt_draws_month +     # Debt proceeds
                 (net_lending_income if cfg.lending_income_type == "Cash" else 0.0) +  # Cash lending income
-                exit_proceeds_cash +   # Exit proceeds
-                (treasury_income if treasury_income > 0 else 0.0)  # Treasury income
+                exit_proceeds_cash +   # Exit proceeds from investments
+                treasury_income        # Treasury income
             )
             
             cash_outflows = (
@@ -241,8 +254,6 @@ class FundModel:
             
             # 7. BALANCE SHEET UPDATES
             contributed_capital = bop["Contributed_Capital"] + equity_contribution
-            lending_assets = equity_for_lending
-            investment_assets = equity_for_investments
             assets_outstanding = lending_assets + investment_assets
             
             # Store monthly results
@@ -250,10 +261,11 @@ class FundModel:
                 contributed_capital, lp_contrib, gp_contrib, 
                 assets_outstanding, lending_assets, investment_assets,
                 mgmt_fees, opex, treasury_income, 
-                lending_interest_income, net_lending_income,
+                lending_interest_income, investment_income,  # Now correctly shows investment gains
                 cash_inflows, cash_outflows, net_cash_flow, cash_balance, 
                 0.0, 0.0, 0.0,  # Distributions filled in waterfall
-                debt_draws_month, debt_interest_month, debt_repay_month
+                debt_draws_month, debt_interest_month, debt_repay_month,
+                total_debt_outstanding, net_lending_income  # Added debt outstanding and net lending
             ]
 
     def _allocate_waterfall(self):
@@ -366,7 +378,8 @@ class FundModel:
             "Final_LP_NAV": final_lp_nav,
             "Final_GP_NAV": final_gp_nav,
             "Total_Lending_Income": self.df["Lending_Interest_Income"].sum(),
-            "Net_Lending_Income": self.df["Investment_Income"].sum(),
+            "Net_Lending_Income": self.df["Net_Lending_Income"].sum(),
+            "Total_Investment_Gains": self.df["Investment_Income"].sum(),
             "Final_Cash_Balance": self.df["Cash_Balance"].iloc[-1],
         })
 

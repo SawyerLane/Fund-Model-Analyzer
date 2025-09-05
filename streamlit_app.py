@@ -1,4 +1,4 @@
-# streamlit_app.py - UPDATED VERSION
+# streamlit_app.py - CORRECTED VERSION
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -46,7 +46,7 @@ with st.sidebar.expander("💼 Capital Deployment", expanded=False):
         default_val = min(year * equity_commit / investment_period, equity_commit)
         eq_ramp.append(st.number_input(f"Cumulative Equity by Year {year} ($)", 0, int(equity_commit), int(default_val), 1_000_000, key=f"eq_ramp_{year}"))
     
-    # Debt tranches UI (unchanged)
+    # Debt tranches UI
     num_debt_tranches = st.number_input("Number of Debt Tranches", 0, 5, 0, key="num_debt_tranches")
     debt_tranches_data = []
     for i in range(num_debt_tranches):
@@ -80,25 +80,33 @@ with st.sidebar.expander("💼 Capital Deployment", expanded=False):
         ))
 
 with st.sidebar.expander("💰 Fund Economics", expanded=True):
+    st.markdown("**Asset Allocation**")
+    equity_for_lending_pct = st.slider("Equity for Lending (%)", 0.0, 100.0, 30.0, 1.0, key="equity_for_lending_pct",
+                                      help="Percentage of equity used for lending operations vs. investments") / 100.0
+    
     st.markdown("**Lending Operations**")
     lending_yield = st.number_input("Lending Rate (Annual %)", 0.0, 50.0, 12.0, 0.1, key="lending_yield", 
                                    help="Interest rate charged on loans made with fund capital") / 100.0
     lending_income_type = st.selectbox("Lending Income Type", ["Cash", "PIK"], index=1, key="lending_income_type",
                                       help="PIK = Payment-in-Kind (reinvested), Cash = Distributed")
-    equity_for_lending_pct = st.slider("Equity for Lending (%)", 0.0, 100.0, 30.0, 1.0, key="equity_for_lending_pct",
-                                      help="Percentage of equity used for lending operations vs. investments") / 100.0
     
     # Calculate and display lending spread
     if debt_tranches_data:
-        avg_debt_rate = sum(t.annual_rate for t in debt_tranches_data) / len(debt_tranches_data)
-        lending_spread = lending_yield - avg_debt_rate
-        st.info(f"**Lending Spread: {lending_spread:.2%}** (Lending Rate - Avg Debt Cost)")
+        weighted_debt_rate = sum(t.annual_rate * t.amount for t in debt_tranches_data) / sum(t.amount for t in debt_tranches_data)
+        lending_spread = lending_yield - weighted_debt_rate
+        leverage_ratio = sum(t.amount for t in debt_tranches_data) / equity_commit if equity_commit > 0 else 0
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"**Lending Spread: {lending_spread:.2%}**")
+        with col2:
+            st.info(f"**Leverage: {leverage_ratio:.1f}x**")
     
     st.markdown("**Other Income**")
     treasury_yield = st.number_input("Treasury Yield (Annual %)", 0.0, 10.0, 4.0, 0.1, key="treasury_yield") / 100.0
 
 with st.sidebar.expander("📊 Management & Fees", expanded=False):
-    mgmt_fee_basis = st.selectbox("Fee Basis",["Equity Commitment", "Assets Outstanding"], key="mgmt_fee_basis")
+    mgmt_fee_basis = st.selectbox("Fee Basis",["Equity Commitment", "Total Commitment (Equity + Debt)", "Assets Outstanding"], key="mgmt_fee_basis")
     waive_mgmt_fee_on_gp = st.checkbox("Waive Fee on GP Commitment", value=True, key="waive_mgmt_fee_on_gp")
     mgmt_early = st.number_input("Fee - Early Period (%)", 0.0, 10.0, 2.0, 0.05, key="mgmt_early") / 100.0
     mgmt_late = st.number_input("Fee - Late Period (%)", 0.0, 10.0, 1.75, 0.05, key="mgmt_late") / 100.0
@@ -136,9 +144,7 @@ try:
         treasury_yield_annual=treasury_yield, mgmt_fee_basis=mgmt_fee_basis, 
         waive_mgmt_fee_on_gp=waive_mgmt_fee_on_gp,
         mgmt_fee_annual_early=mgmt_early, mgmt_fee_annual_late=mgmt_late, 
-        opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp,
-        # Backward compatibility
-        asset_yield_annual=lending_yield, asset_income_type=lending_income_type
+        opex_annual_fixed=opex_annual, eq_ramp_by_year=eq_ramp
     )
     wcfg = WaterfallConfig(
         return_capital_first=return_capital_first, preferred_return_rate=pref_rate, gp_final_split=gp_carry
@@ -146,7 +152,7 @@ try:
     
     monthly_df, summary = run_fund_scenario(cfg, wcfg, exit_config_data)
 
-    st.header("🔑 Key Performance Metrics")
+    st.header("📊 Key Performance Metrics")
     c1, c2, c3, c4 = st.columns(4)
     with c1: 
         st.metric("LP IRR (Annual)", format_metric(summary.get("LP_IRR_annual"), ".1%"))
@@ -159,17 +165,17 @@ try:
         st.metric("Total GP Carried Interest", f"${format_metric(summary.get('Total_GP_Profit'), ',.0f')}")
     with c4: 
         st.metric("Gross Exit Proceeds", f"${format_metric(summary.get('Gross_Exit_Proceeds'), ',.0f')}")
-        st.metric("Total Lending Income", f"${format_metric(summary.get('Total_Lending_Income'), ',.0f')}")
+        st.metric("Total Investment Gains", f"${format_metric(summary.get('Total_Investment_Gains'), ',.0f')}")
 
-    # Additional Fund Economics Section
+    # Fund Economics Breakdown Section
     st.header("📈 Fund Economics Breakdown")
     eco1, eco2, eco3 = st.columns(3)
     with eco1:
         st.metric("Total Management Fees", f"${format_metric(summary.get('Total_Mgmt_Fees'), ',.0f')}")
-        st.metric("Final LP NAV", f"${format_metric(summary.get('Final_LP_NAV'), ',.0f')}")
+        st.metric("Gross Lending Income", f"${format_metric(summary.get('Total_Lending_Income'), ',.0f')}")
     with eco2:
         st.metric("Net Lending Income", f"${format_metric(summary.get('Net_Lending_Income'), ',.0f')}")
-        st.metric("Final GP NAV", f"${format_metric(summary.get('Final_GP_NAV'), ',.0f')}")
+        st.metric("Final LP NAV", f"${format_metric(summary.get('Final_LP_NAV'), ',.0f')}")
     with eco3:
         st.metric("Final Cash Balance", f"${format_metric(summary.get('Final_Cash_Balance'), ',.0f')}")
         if debt_tranches_data:
@@ -187,60 +193,134 @@ try:
             Lending_Assets=('Lending_Assets', 'last'),
             Investment_Assets=('Investment_Assets', 'last'),
             Debt_Outstanding=('Debt_Outstanding', 'last'),
-            Lending_Income=('Investment_Income', 'sum')  # Net lending income
+            Net_Lending_Income=('Net_Lending_Income', 'sum'),
+            Investment_Income=('Investment_Income', 'sum')
         ).reset_index()
         
         annual_df['Annual_LP_Net_Cash_Flow'] = annual_df['LP_Distribution'] - annual_df['LP_Contribution']
         annual_df['Cumulative_LP_Net_Cash_Flow'] = annual_df['Annual_LP_Net_Cash_Flow'].cumsum()
         
-        # J-Curve Chart
-        j_curve_data = annual_df.melt(id_vars=['Year'], 
-                                     value_vars=['Annual_LP_Net_Cash_Flow', 'Cumulative_LP_Net_Cash_Flow'], 
-                                     var_name='Flow Type', value_name='Amount')
+        # Tab container for different views
+        tab1, tab2, tab3, tab4 = st.tabs(["📈 J-Curve", "💼 Asset Allocation", "💰 Income Sources", "📊 Data Tables"])
         
-        bar = alt.Chart(j_curve_data.query("`Flow Type` == 'Annual_LP_Net_Cash_Flow'")).mark_bar(size=20).encode(
-            x=alt.X('Year:O', title='Year'), 
-            y=alt.Y('Amount:Q', title='Annual Net Cash Flow ($)'),
-            color=alt.condition(alt.datum.Amount > 0, 
-                              alt.value(COLOR_SCHEME["primary_blue"]), 
-                              alt.value(COLOR_SCHEME["primary_orange"])),
-            tooltip=['Year', alt.Tooltip('Amount:Q', format='$,.0f')]
-        )
-        line = alt.Chart(j_curve_data.query("`Flow Type` == 'Cumulative_LP_Net_Cash_Flow'")).mark_line(
-            color=COLOR_SCHEME["secondary_dark_blue"], point=True).encode(
-            x=alt.X('Year:O'), 
-            y=alt.Y('Amount:Q', title='Cumulative Net Cash Flow ($)'), 
-            tooltip=['Year', alt.Tooltip('Amount:Q', format='$,.0f')]
-        )
-        st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent').properties(
-            title="LP Net Cash Flow (J-Curve)"), use_container_width=True)
+        with tab1:
+            # J-Curve Chart
+            j_curve_data = annual_df.melt(id_vars=['Year'], 
+                                         value_vars=['Annual_LP_Net_Cash_Flow', 'Cumulative_LP_Net_Cash_Flow'], 
+                                         var_name='Flow Type', value_name='Amount')
+            
+            bar = alt.Chart(j_curve_data.query("`Flow Type` == 'Annual_LP_Net_Cash_Flow'")).mark_bar(size=20).encode(
+                x=alt.X('Year:O', title='Year'), 
+                y=alt.Y('Amount:Q', title='Annual Net Cash Flow ($)'),
+                color=alt.condition(alt.datum.Amount > 0, 
+                                  alt.value(COLOR_SCHEME["primary_blue"]), 
+                                  alt.value(COLOR_SCHEME["primary_orange"])),
+                tooltip=['Year', alt.Tooltip('Amount:Q', format='$,.0f')]
+            )
+            line = alt.Chart(j_curve_data.query("`Flow Type` == 'Cumulative_LP_Net_Cash_Flow'")).mark_line(
+                color=COLOR_SCHEME["secondary_dark_blue"], point=True, strokeWidth=3).encode(
+                x=alt.X('Year:O'), 
+                y=alt.Y('Amount:Q', title='Cumulative Net Cash Flow ($)'), 
+                tooltip=['Year', alt.Tooltip('Amount:Q', format='$,.0f')]
+            )
+            st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent').properties(
+                title="LP Net Cash Flow (J-Curve)", height=400), use_container_width=True)
 
-        # Asset Allocation Chart
-        st.subheader("Asset Allocation Over Time")
-        asset_data = annual_df.melt(id_vars=['Year'], 
-                                   value_vars=['Lending_Assets', 'Investment_Assets'], 
-                                   var_name='Asset Type', value_name='Amount')
-        
-        asset_chart = alt.Chart(asset_data).mark_area().encode(
-            x=alt.X('Year:O', title='Year'),
-            y=alt.Y('Amount:Q', title='Asset Value ($)', stack='zero'),
-            color=alt.Color('Asset Type:N', 
-                          scale=alt.Scale(domain=['Lending_Assets', 'Investment_Assets'],
-                                        range=[COLOR_SCHEME["primary_blue"], COLOR_SCHEME["primary_orange"]])),
-            tooltip=['Year', 'Asset Type', alt.Tooltip('Amount:Q', format='$,.0f')]
-        ).properties(title="Asset Allocation: Lending vs. Investment Assets")
-        
-        st.altair_chart(asset_chart, use_container_width=True)
+        with tab2:
+            # Asset Allocation Chart
+            asset_data = annual_df.melt(id_vars=['Year'], 
+                                       value_vars=['Lending_Assets', 'Investment_Assets'], 
+                                       var_name='Asset Type', value_name='Amount')
+            
+            asset_chart = alt.Chart(asset_data).mark_area().encode(
+                x=alt.X('Year:O', title='Year'),
+                y=alt.Y('Amount:Q', title='Asset Value ($)', stack='zero'),
+                color=alt.Color('Asset Type:N', 
+                              scale=alt.Scale(domain=['Lending_Assets', 'Investment_Assets'],
+                                            range=[COLOR_SCHEME["primary_blue"], COLOR_SCHEME["primary_orange"]]),
+                              legend=alt.Legend(title="Asset Type")),
+                tooltip=['Year', 'Asset Type', alt.Tooltip('Amount:Q', format='$,.0f')]
+            ).properties(title="Asset Allocation: Lending vs. Investment Assets", height=400)
+            
+            st.altair_chart(asset_chart, use_container_width=True)
+            
+            # Add debt leverage visualization
+            if debt_tranches_data:
+                leverage_data = annual_df[['Year', 'Lending_Assets', 'Debt_Outstanding']].copy()
+                leverage_data['Leverage_Ratio'] = leverage_data['Debt_Outstanding'] / leverage_data['Lending_Assets'].replace(0, np.nan)
+                
+                leverage_chart = alt.Chart(leverage_data).mark_line(color=COLOR_SCHEME["secondary_grey"], strokeDash=[5,5]).encode(
+                    x=alt.X('Year:O', title='Year'),
+                    y=alt.Y('Leverage_Ratio:Q', title='Debt/Lending Assets Ratio'),
+                    tooltip=['Year', alt.Tooltip('Leverage_Ratio:Q', format='.2f')]
+                ).properties(title="Leverage Ratio Over Time", height=300)
+                
+                st.altair_chart(leverage_chart, use_container_width=True)
+
+        with tab3:
+            # Income Sources Chart
+            income_data = annual_df.melt(id_vars=['Year'], 
+                                        value_vars=['Net_Lending_Income', 'Investment_Income'], 
+                                        var_name='Income Type', value_name='Amount')
+            
+            income_chart = alt.Chart(income_data).mark_bar().encode(
+                x=alt.X('Year:O', title='Year'),
+                y=alt.Y('Amount:Q', title='Income ($)'),
+                color=alt.Color('Income Type:N',
+                              scale=alt.Scale(domain=['Net_Lending_Income', 'Investment_Income'],
+                                            range=[COLOR_SCHEME["primary_blue"], COLOR_SCHEME["secondary_dark_blue"]]),
+                              legend=alt.Legend(title="Income Source")),
+                tooltip=['Year', 'Income Type', alt.Tooltip('Amount:Q', format='$,.0f')]
+            ).properties(title="Income Sources: Lending Spread vs. Investment Gains", height=400)
+            
+            st.altair_chart(income_chart, use_container_width=True)
+
+        with tab4:
+            # Data Tables
+            st.subheader("Annual Summary")
+            display_annual = annual_df.copy()
+            # Format currency columns
+            currency_cols = ['LP_Contribution', 'LP_Distribution', 'GP_Contribution', 'GP_Distribution', 
+                           'Lending_Assets', 'Investment_Assets', 'Debt_Outstanding', 
+                           'Net_Lending_Income', 'Investment_Income', 'Annual_LP_Net_Cash_Flow', 'Cumulative_LP_Net_Cash_Flow']
+            for col in currency_cols:
+                if col in display_annual.columns:
+                    display_annual[col] = display_annual[col].apply(lambda x: f"${x:,.0f}")
+            st.dataframe(display_annual, use_container_width=True)
+            
+            # Summary metrics table
+            st.subheader("Summary Metrics")
+            summary_df = pd.DataFrame({
+                'Metric': list(summary.keys()),
+                'Value': [f"{v:.2%}" if 'IRR' in k or 'rate' in k.lower() 
+                         else f"{v:.2f}x" if 'MOIC' in k 
+                         else f"${v:,.0f}" if isinstance(v, (int, float)) and v > 100
+                         else str(v) 
+                         for k, v in summary.items()]
+            })
+            st.dataframe(summary_df, use_container_width=True)
 
         # Download functionality
         st.subheader("📥 Export Data")
-        if st.button("📊 Generate Excel Report"):
-            excel_data = to_excel(monthly_df, annual_df, summary)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📊 Generate Excel Report", type="primary"):
+                excel_data = to_excel(monthly_df, annual_df, summary)
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=excel_data,
+                    file_name="fund_model_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        with col2:
+            # Add CSV export option
+            csv_buffer = io.StringIO()
+            annual_df.to_csv(csv_buffer, index=False)
             st.download_button(
-                label="📥 Download Excel Report",
-                data=excel_data,
-                file_name="fund_model_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                label="📥 Download Annual Data (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name="fund_annual_data.csv",
+                mime="text/csv"
             )
 
 except Exception as e:
